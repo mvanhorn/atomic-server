@@ -86,7 +86,7 @@ Not top-level plans. Indexed so they do not go missing.
 | [`actions.md`](./actions.md) | Unified action registry (menus, shortcuts, AI tools). |
 | [`table-creation-ux-audit.md`](./table-creation-ux-audit.md) | Observation log (2026-07-03). First pass addressed. |
 | [`kanban-views-test-spec.md`](./kanban-views-test-spec.md) | Manual test spec for kanban + `create_table`. |
-| [`auditability-loro-history.md`](./auditability-loro-history.md) | Open. History should list verifiable changes (who / what / when / proof). Loro = what; signed envelope blob = who/when/proof. Not a `/commits` class. |
+| [`auditability-loro-history.md`](./auditability-loro-history.md) | Open. History should list verifiable changes. Blobs in a Db tree beside Loro snapshots; live COMMIT keeps them, bulk `SYNC_PUSH` does not unless Layer 2 carries envelopes. |
 
 Fixed notes live in [`completed/`](./completed/).
 
