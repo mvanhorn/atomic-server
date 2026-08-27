@@ -96,6 +96,8 @@ Immediate independent fix, even under `full`: **do not index `Value::LoroDoc`**.
 `to_reference_index_strings` should return `None` for it. That stops the
 base64-blob index bomb without changing the wire.
 
+- [x] `Value::LoroDoc` is not indexed (`values.rs`).
+
 Also drop or hide the default `/commits` class collection
 (`collections.rs` special-cases `urls::COMMIT` sort). It is an unbounded
 audit dump, not a product surface.
@@ -156,10 +158,10 @@ misnamed.
 
 ## Suggested order
 
-1. **Index skip for `LoroDoc`** — tiny, reversible, measurable index-size
-   drop on any existing store after rebuild.
-2. **`maybe_store_commit` + `retention=none` test mode** — prove
-   read/write/sync/history without commit rows (genesis kept).
+1. **Index skip for `LoroDoc`** — [x] shipped.
+2. **`maybe_store_commit` + `retention=none` test mode** — [x] policy +
+   apply gate + `ATOMIC_COMMIT_RETENTION`. Default still `full`. No
+   bounded `recent` cache yet.
 3. **`lastCommit` out of Loro** — unblocks cleaner apply and smaller docs.
 4. **Layer 2 provenance** — then HTTP `/commit` can shrink.
 5. **UI + spec** — no commit fetches; docs match the envelope model.

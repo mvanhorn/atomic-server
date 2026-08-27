@@ -225,6 +225,13 @@ pub trait Storelike: Sized + Send + Sync {
         std::sync::Arc::new(crate::sync::policy::OpenPolicy)
     }
 
+    /// Whether applied commits are stored as queryable resources.
+    /// Default [`crate::CommitRetentionPolicy::Full`] (today's behaviour).
+    /// `Db` overrides this from `set_commit_retention`.
+    fn commit_retention(&self) -> crate::CommitRetentionPolicy {
+        crate::CommitRetentionPolicy::Full
+    }
+
     /// Get the active drive subject, if one is set.
     fn get_active_drive(&self) -> Option<String> {
         None
@@ -285,7 +292,12 @@ pub trait Storelike: Sized + Send + Sync {
     ) -> AtomicResult<CommitResponse> {
         let applied = commit.validate_and_build_response(opts, self).await?;
 
-        self.add_resource(&applied.commit_resource).await?;
+        if self
+            .commit_retention()
+            .should_persist(applied.auth_impact().is_critical())
+        {
+            self.add_resource(&applied.commit_resource).await?;
+        }
 
         match (&applied.resource_old, &applied.resource_new) {
             (None, None) => {

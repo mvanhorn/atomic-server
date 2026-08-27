@@ -58,6 +58,61 @@ pub struct CommitApplied {
     pub imported_new_ops: bool,
 }
 
+/// How long a node keeps signed commit *resources* after applying them.
+///
+/// The write is always verified. This only controls whether the certificate is
+/// stored as a queryable `did:ad:commit:…` row. See
+/// `planning/commit-retention-and-state-certificates.md`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CommitRetentionPolicy {
+    /// Keep every commit as an audit resource (today's behaviour).
+    #[default]
+    Full,
+    /// Keep a bounded window. Until that cache exists, treated as [`Self::Full`].
+    Recent,
+    /// Keep only genesis and authorization-critical commits (rights, parent,
+    /// destroy). Ordinary content commits are discarded after apply.
+    None,
+}
+
+impl CommitRetentionPolicy {
+    /// Whether this applied commit should be persisted as a resource.
+    ///
+    /// `none` still keeps the must-retain floor: genesis plus any commit that
+    /// mutates rights, parent, or destroy ([`crate::hierarchy::AuthImpact`]).
+    pub fn should_persist(self, auth_critical: bool) -> bool {
+        match self {
+            Self::Full | Self::Recent => true,
+            Self::None => auth_critical,
+        }
+    }
+}
+
+impl std::fmt::Display for CommitRetentionPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Full => "full",
+            Self::Recent => "recent",
+            Self::None => "none",
+        })
+    }
+}
+
+impl std::str::FromStr for CommitRetentionPolicy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "full" => Ok(Self::Full),
+            "recent" => Ok(Self::Recent),
+            "none" => Ok(Self::None),
+            other => Err(format!(
+                "unknown commit retention '{other}'; expected full, recent, or none"
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 /// Describes options for applying a Commit.
 /// Skip the checks you don't need to get better performance, or if you want to break the rules a little.
@@ -1497,6 +1552,27 @@ mod test {
 
     use super::*;
     use crate::{agents::Agent, Store, Storelike};
+
+    #[test]
+    fn commit_retention_policy_parse_and_persist() {
+        assert_eq!(
+            "full".parse::<CommitRetentionPolicy>().unwrap(),
+            CommitRetentionPolicy::Full
+        );
+        assert_eq!(
+            "NONE".parse::<CommitRetentionPolicy>().unwrap(),
+            CommitRetentionPolicy::None
+        );
+        assert_eq!(
+            "recent".parse::<CommitRetentionPolicy>().unwrap(),
+            CommitRetentionPolicy::Recent
+        );
+        assert!("bogus".parse::<CommitRetentionPolicy>().is_err());
+        assert!(CommitRetentionPolicy::Full.should_persist(false));
+        assert!(CommitRetentionPolicy::Recent.should_persist(false));
+        assert!(!CommitRetentionPolicy::None.should_persist(false));
+        assert!(CommitRetentionPolicy::None.should_persist(true));
+    }
 
     #[tokio::test]
     async fn agent_and_commit() {

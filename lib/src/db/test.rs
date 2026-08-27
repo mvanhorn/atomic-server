@@ -2366,3 +2366,68 @@ async fn partial_index_for_an_unwatched_filter_is_rebuilt() {
         res.count
     );
 }
+
+#[tokio::test]
+#[timeout(120000)]
+async fn commit_retention_none_keeps_auth_floor_drops_content() {
+    let store = Db::init_temp("commit_retention_none").await.unwrap();
+    store.set_commit_retention(crate::CommitRetentionPolicy::None);
+
+    let mut resource = crate::Resource::new("did:ad:placeholder".into());
+    resource
+        .set(urls::NAME.into(), Value::String("first".into()), &store)
+        .await
+        .unwrap();
+    let genesis = resource.save_as_genesis(&store).await.unwrap();
+    let genesis_commit = genesis.commit_resource.get_subject().clone();
+    let subject = genesis.resource_new.unwrap().get_subject().clone();
+
+    assert!(
+        store.get_resource(&genesis_commit).await.is_ok(),
+        "genesis commits are always retained"
+    );
+
+    let mut resource = store.get_resource(&subject).await.unwrap();
+    resource
+        .set(urls::NAME.into(), Value::String("second".into()), &store)
+        .await
+        .unwrap();
+    let content = resource.save_locally(&store).await.unwrap();
+    let content_commit = content.commit_resource.get_subject().clone();
+    assert_eq!(
+        store
+            .get_resource(&subject)
+            .await
+            .unwrap()
+            .get(urls::NAME)
+            .unwrap()
+            .to_string(),
+        "second",
+        "dropping the commit row must not drop the resource state"
+    );
+    assert!(
+        store.get_resource(&content_commit).await.is_err(),
+        "ordinary content commits must not be stored under retention=none"
+    );
+
+    let mut resource = store.get_resource(&subject).await.unwrap();
+    let writer = store.get_default_agent().unwrap().subject.to_string();
+    resource
+        .set(urls::WRITE.into(), vec![writer].into(), &store)
+        .await
+        .unwrap();
+    let acl = resource.save_locally(&store).await.unwrap();
+    let acl_commit = acl.commit_resource.get_subject().clone();
+    assert!(
+        store.get_resource(&acl_commit).await.is_ok(),
+        "rights-changing commits stay on the must-retain floor"
+    );
+
+    let mut resource = store.get_resource(&subject).await.unwrap();
+    let destroy = resource.destroy(&store).await.unwrap();
+    let destroy_commit = destroy.commit_resource.get_subject().clone();
+    assert!(
+        store.get_resource(&destroy_commit).await.is_ok(),
+        "destroy commits stay on the must-retain floor"
+    );
+}

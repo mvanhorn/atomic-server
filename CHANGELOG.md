@@ -5,12 +5,11 @@ By far most changes relate to `atomic-server`, so if not specified, assume the c
 **Changes to JS assets (including the front-end and JS libraries) are not shown here**, but in [`/browser/CHANGELOG`](/browser/CHANGELOG.md).
 See [STATUS.md](server/STATUS.md) to learn more about which features will remain stable.
 
-## UNRELEASED
+- Commits: signed write certificates can be discarded after apply. Default
+  remains `full` (keep every commit resource). `ATOMIC_COMMIT_RETENTION=none`
+  keeps only genesis and authorization-critical commits (rights / parent /
+  destroy). Loro binary payloads are no longer written into the KV indexes.
 
-- Git / CI: one integration branch (`develop`) plus stable `v*` tags. Staging
-  follows `develop`; production and live docs follow a tagged release. `master`
-  is no longer a deploy or docs trigger, and `main` is not introduced as a
-  copy of the latest tag.
 
 ## [v0.41.0-beta.2] - 2026-08-01
 

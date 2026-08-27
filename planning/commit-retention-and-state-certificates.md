@@ -567,10 +567,11 @@ history model):
 
 ### Phase 2 — retention policy behind the current format
 
-- [ ] Add `CommitRetentionPolicy`; default `full` (current behaviour).
-- [ ] Route storage through `maybe_store_commit`.
-- [ ] Add a test mode with retention disabled; ensure write/read/sync/history
+- [x] Add `CommitRetentionPolicy`; default `full` (current behaviour).
+- [x] Route storage through a persist gate (`should_persist` on apply).
+- [x] Add a test mode with retention disabled; ensure write/read/history
       all pass with it off (genesis commits still retained).
+      (`commit_retention_none_keeps_auth_floor_drops_content`)
 
 ### Phase 2.5 — intrinsic creation metadata (prerequisite for per-resource)
 

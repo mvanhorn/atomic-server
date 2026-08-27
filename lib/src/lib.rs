@@ -112,7 +112,7 @@ pub mod values;
 pub mod vault;
 
 pub use atoms::Atom;
-pub use commit::Commit;
+pub use commit::{Commit, CommitRetentionPolicy};
 #[cfg(feature = "db")]
 pub use db::{AgentLoadResult, Db, DbEvent, DriveInfo, DriveUsage, ReplicationTarget};
 pub use errors::AtomicError;

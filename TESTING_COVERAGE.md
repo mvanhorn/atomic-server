@@ -313,6 +313,16 @@ vector (`personal_drive_cross_lang_vector`) pins the nonce, signature, and DID.
 
 Not covered: leftover Yjs-era DocumentV2 bodies end-to-end (needs a stored `{ type: 'ydoc' }` fixture); read-only v1 documents stay on the element list and have no e2e.
 
+## Commits as envelopes
+
+| Flow | Layer | Where |
+|---|---|---|
+| `LoroDoc` values are not KV-index keys | protocol | `lib/src/values.rs::loro_doc_is_not_indexed` |
+| Retention policy parse + `none` drops only non-critical commits | protocol | `lib/src/commit.rs::commit_retention_policy_parse_and_persist` |
+| `retention=none` keeps genesis/ACL/destroy, drops content, resource state survives | protocol | `lib/src/db/test.rs::commit_retention_none_keeps_auth_floor_drops_content` |
+
+Not covered: `recent` bounded cache; per-resource `retention` propval; `lastCommit` still written into the Loro doc; Layer-2 signed provenance on `SYNC_PUSH`. See [`planning/commits-as-envelopes.md`](./planning/commits-as-envelopes.md).
+
 ## Personal drive identity
 
 | Flow | Where |
