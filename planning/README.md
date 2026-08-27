@@ -50,7 +50,7 @@ Remaining work, not "this file exists."
 | [`index-performance.md`](./index-performance.md) | First tranche shipped. Structural permission-check fix is `zones.md`, not built. |
 | [`disk-storage-and-persistence-optimization.md`](./disk-storage-and-persistence-optimization.md) | **Proposal.** Full-snapshot writes, no auto-compaction, O(file) open fsync. |
 | [`virtual-drive.md`](./virtual-drive.md) | Mountable filesystem (NFS / FUSE / native cloud-sync APIs). |
-| [`commit-retention-and-state-certificates.md`](./commit-retention-and-state-certificates.md) | **Proposal.** Commits stay signed write certificates; retention is node policy. |
+| [`commit-retention-and-state-certificates.md`](./commit-retention-and-state-certificates.md) | **Proposal.** Commits stay signed write certificates; retention is node policy. Content-commit drop shipped; remaining is optional audit retention. |
 | [`p2p-presence.md`](./p2p-presence.md) | **Proposal.** Ephemeral presence over Iroh (`EPHEMERAL 0x40`). Same-agent only. |
 | [`reticulum-sync.md`](./reticulum-sync.md) | **Proposal.** Atomic sync protocol over Reticulum. |
 | [`json-schema-code-first.md`](./json-schema-code-first.md) | **Proposal.** Code-first JSON Schema → local DID-backed Class/Property resources. |
@@ -86,6 +86,7 @@ Not top-level plans. Indexed so they do not go missing.
 | [`actions.md`](./actions.md) | Unified action registry (menus, shortcuts, AI tools). |
 | [`table-creation-ux-audit.md`](./table-creation-ux-audit.md) | Observation log (2026-07-03). First pass addressed. |
 | [`kanban-views-test-spec.md`](./kanban-views-test-spec.md) | Manual test spec for kanban + `create_table`. |
+| [`auditability-loro-history.md`](./auditability-loro-history.md) | Open question. Loro history is unsigned; content envelopes are dropped. Strict audit = optional blob log of signed JSON, not a queryable `/commits` class. |
 
 Fixed notes live in [`completed/`](./completed/).
 
