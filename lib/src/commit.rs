@@ -70,9 +70,6 @@ pub struct CommitOpts {
     pub validate_timestamp: bool,
     /// Checks whether the creator of the Commit has the rights to edit the Resource.
     pub validate_rights: bool,
-    /// Checks whether the previous Commit applied to the resource matches the one mentioned in the Commit/
-    /// This makes sure that the Commit is not applied twice, or that the one creating it had a faulty state.
-    pub validate_previous_commit: bool,
     /// Detects commits whose Loro update's writes silently lost LWW against
     /// the stored state — i.e. the client's Loro doc wasn't seeded from the
     /// server's current state, so its ops are concurrent with stored ops and
@@ -99,7 +96,6 @@ impl CommitOpts {
             validate_signature: false,
             validate_timestamp: false,
             validate_rights: false,
-            validate_previous_commit: false,
             validate_loro_causality: false,
             update_index: false,
             validate_for_agent: None,
@@ -130,7 +126,7 @@ pub struct Commit {
     /// Base64 encoded signature of the JSON serialized Commit
     #[serde(rename = "https://atomicdata.dev/properties/signature")]
     pub signature: Option<String>,
-    /// The previously applied commit to this Resource.
+    /// Optional audit pointer at an earlier envelope. Not a causal gate.
     #[serde(rename = "https://atomicdata.dev/properties/previousCommit")]
     pub previous_commit: Option<String>,
     /// Whether this is the first commit for a Resource.
@@ -179,34 +175,6 @@ impl Commit {
             }
         }
 
-        Ok(())
-    }
-
-    pub fn validate_previous_commit(
-        &self,
-        resource_old: &Resource,
-        subject_url: &str,
-    ) -> AtomicResult<()> {
-        let commit = self;
-        if let Ok(last_commit_val) = resource_old.get(urls::LAST_COMMIT) {
-            let last_commit = last_commit_val.to_string();
-
-            if let Some(prev_commit) = commit.previous_commit.clone() {
-                // TODO: try auto merge
-                if last_commit != prev_commit {
-                    return Err(format!(
-                        "previousCommit mismatch. Had lastCommit '{}' in Resource {}, but got in Commit '{}'. Perhaps you created the Commit based on an outdated version of the Resource.",
-                        last_commit, subject_url, prev_commit,
-                    )
-                    .into());
-                }
-            } else {
-                return Err(format!("Missing `previousCommit`. Resource {} already exists, and it has a `lastCommit` field, so a `previousCommit` field is required in your Commit.", commit.subject).into());
-            }
-        } else {
-            // If there is no lastCommit in the Resource, we'll accept the Commit.
-            tracing::warn!("No `lastCommit` in Resource. This can be a bug, or it could be that the resource was never properly updated.");
-        }
         Ok(())
     }
 
@@ -609,24 +577,10 @@ impl Commit {
             }
         }
 
-        // `previous_commit` is recorded on every commit for audit / history
-        // navigation, but it is NOT a validation gate. Concurrency is handled
-        // by the Loro CRDT itself: each commit's `loro_update` carries the
-        // op's peer-scoped Lamport clock, and concurrent edits merge
-        // deterministically — there is no single linear chain to enforce.
-        //
-        // The previous behaviour ("commit's `previousCommit` must equal the
-        // resource's current `lastCommit`") was a Git-style optimistic-
-        // concurrency check that fought the CRDT semantics: under any real
-        // concurrent edit (two peers committing without seeing each other),
-        // one of them would be rejected even though Loro could merge them
-        // perfectly. It also produced a leaky wire-protocol invariant — the
-        // client had to round-trip `lastCommit` through every code path or
-        // its next commit would 500.
-        //
-        // The is-genesis distinction below stays — that's about identity
-        // (subject = signature), not ordering.
-        let _ = opts.validate_previous_commit;
+        // `previous_commit` is optional audit metadata. It is NOT a
+        // validation gate. Concurrency is handled by the Loro CRDT:
+        // each commit's `loro_update` carries the op's peer-scoped
+        // Lamport clock, and concurrent edits merge deterministically.
 
         // Reject commits that carry no Loro update and aren't a destroy.
         // Loro is the single source of truth for all user data; a commit
@@ -970,7 +924,8 @@ impl Commit {
 
         let commit_resource: Resource = commit.into_resource(store).await?;
 
-        // Set the `lastCommit` to the newly created Commit
+        // Stamp `lastCommit` with this envelope's id. The id is a receipt,
+        // not a refetchable resource — ordinary content commits are not stored.
         applied
             .resource_new
             .set(
@@ -1243,7 +1198,7 @@ pub struct CommitBuilder {
     loro_update: Option<Vec<u8>>,
     /// If set to true, deletes the entire resource
     destroy: bool,
-    /// The previous Commit that was applied to the target resource (the subject) of this Commit.
+    /// Optional audit pointer at an earlier envelope. Not a causal gate.
     previous_commit: Option<String>,
     /// Whether this is a genesis commit (the first commit for a DID resource).
     pub is_genesis: bool,
@@ -1277,10 +1232,6 @@ impl CommitBuilder {
         Ok(commit_builder)
     }
 
-    /// Creates the Commit and signs it using a signature.
-    /// Does not send it - see [atomic_lib::client::post_commit].
-    /// Private key is the base64 encoded pkcs8 for the signer.
-    /// Sets the `previousCommit` using the `lastCommit`.
     /// Returns true if this builder has any pending change that would
     /// produce a non-empty commit. Used by callers (`Resource::save`,
     /// `Resource::save_locally`) to skip a sign+apply round-trip when
@@ -1296,6 +1247,9 @@ impl CommitBuilder {
             || self.destroy
     }
 
+    /// Creates the Commit and signs it using a signature.
+    /// Does not send it - see [atomic_lib::client::post_commit].
+    /// Private key is the base64 encoded pkcs8 for the signer.
     pub async fn sign(
         mut self,
         agent: &crate::agents::Agent,
@@ -1371,7 +1325,7 @@ impl CommitBuilder {
         self.loro_update = Some(update);
     }
 
-    /// Set the previous Commit URL (for the commit chain on the target resource).
+    /// Set an optional audit pointer at an earlier envelope. Not a causal gate.
     pub fn set_previous_commit(&mut self, previous_commit: String) {
         self.previous_commit = Some(previous_commit);
     }
@@ -1485,7 +1439,6 @@ mod test {
             validate_schema: true,
             validate_signature: true,
             validate_timestamp: true,
-            validate_previous_commit: true,
             validate_loro_causality: true,
             validate_rights: false,
             validate_for_agent: None,
@@ -1694,9 +1647,9 @@ mod test {
         }
         {
             // A did:ad: subject with a subpath is structurally invalid.
-            // sign() now enforces that did:ad: commits without a previous_commit
-            // must have is_genesis=true, so we set that here. apply_commit then
-            // rejects the subpath as "Invalid DID".
+            // sign() requires is_genesis=true for a new DID resource, so we
+            // set that here. apply_commit then rejects the subpath as
+            // "Invalid DID".
             let subject = "did:ad:cbXxQGm7UBBS5JPvl/NR/p9RJNbSMUjvA7lRYQt9lZvKZrU1FBo6Icl5uctr7i1AMZ/mElWZ3X1dApo5ifzmBg==/subpath";
             let mut commitbuilder = crate::commit::CommitBuilder::new(subject.into());
             commitbuilder.is_genesis = true;
@@ -1747,7 +1700,6 @@ mod test {
         let opts = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             ..CommitOpts::no_validations_no_index()
         };
@@ -1789,7 +1741,6 @@ mod test {
         let opts = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             validate_loro_causality: true,
             ..CommitOpts::no_validations_no_index()
@@ -1881,7 +1832,6 @@ mod test {
         let opts = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             validate_loro_causality: true,
             ..CommitOpts::no_validations_no_index()
@@ -1964,7 +1914,6 @@ mod test {
         let opts = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             validate_loro_causality: true,
             ..CommitOpts::no_validations_no_index()
@@ -2044,7 +1993,6 @@ mod test {
         let opts = CommitOpts {
             validate_signature: false,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             ..CommitOpts::no_validations_no_index()
         };
@@ -2115,7 +2063,6 @@ mod test {
         let opts = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             update_index: true,
             ..CommitOpts::no_validations_no_index()
@@ -2158,7 +2105,6 @@ mod test {
         let opts_no_rights = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             ..CommitOpts::no_validations_no_index()
         };
@@ -2223,7 +2169,6 @@ mod test {
         let opts = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             update_index: true,
             ..CommitOpts::no_validations_no_index()
@@ -2383,7 +2328,6 @@ mod test {
         let opts_with_rights = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: true,
             validate_rights: true,
             validate_for_agent: Some(agent.subject.to_string()),
             update_index: true,
@@ -2468,7 +2412,6 @@ mod test {
         let opts_with_rights = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: true,
             validate_rights: true,
             validate_for_agent: Some(agent.subject.to_string()),
             update_index: true,
@@ -2516,7 +2459,6 @@ mod test {
         let opts_with_rights = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: true,
             validate_rights: true,
             validate_for_agent: Some(agent.subject.to_string()),
             update_index: true,
@@ -2561,7 +2503,6 @@ mod test {
         let opts_with_rights = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: true,
             validate_rights: true,
             validate_for_agent: Some(agent.subject.to_string()),
             update_index: true,
@@ -2594,7 +2535,6 @@ mod test {
         let opts = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             ..CommitOpts::no_validations_no_index()
         };
@@ -2627,7 +2567,6 @@ mod test {
         let opts = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             ..CommitOpts::no_validations_no_index()
         };
@@ -2741,7 +2680,6 @@ mod test {
             validate_schema: true,
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_loro_causality: true,
             validate_rights: false,
             validate_for_agent: None,
@@ -2964,7 +2902,6 @@ mod owner_mode_tests {
         CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: true,
             validate_rights: true,
             validate_for_agent: Some(agent.subject.to_string()),
             update_index: true,

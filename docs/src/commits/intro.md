@@ -23,7 +23,7 @@ See [concepts](concepts.md) for the field list.
 
 - Not the source of current state. Loro is.
 - Not a Git-style parent chain. `previousCommit` is optional audit metadata.
-- Not a product surface. The `/commits` class collection is not created. UI reads author and dates from the resource (genesis certificate and Loro oplog), not by fetching `did:ad:commit:…`.
+- Not a product surface. The `/commits` class collection is not created. UI reads author and dates from the resource's genesis certificate, not by fetching `did:ad:commit:…`.
 - Not required to stay on disk after apply, except genesis and rights / parent / destroy.
 
 ## How a write lands

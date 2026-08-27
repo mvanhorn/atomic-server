@@ -7,9 +7,8 @@ import type { JSX } from 'react';
 type Props = {
   short?: boolean;
   /**
-   * Date read from the resource itself (genesis `createdAt`, or last-edit
-   * from the Loro oplog). No commit fetch — `did:ad:commit:` is not a
-   * queryable resource.
+   * Date read from the resource itself (genesis `createdAt`). No commit
+   * fetch — `did:ad:commit:` is not a queryable resource.
    */
   createdAt?: Date;
   /**

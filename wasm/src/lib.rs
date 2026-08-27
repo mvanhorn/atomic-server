@@ -196,7 +196,6 @@ impl ClientDb {
             validate_signature: false,
             validate_timestamp: false,
             validate_rights: false,
-            validate_previous_commit: false,
             validate_loro_causality: false,
             validate_for_agent: None,
             update_index: true,

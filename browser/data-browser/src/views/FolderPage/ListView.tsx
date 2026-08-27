@@ -34,7 +34,7 @@ export function ListView({
                 <TitleHeaderWrapper>Title</TitleHeaderWrapper>
               </th>
               <ClassCell as='th'>Class</ClassCell>
-              {!basic && <AlignRight as='th'>Last Modified</AlignRight>}
+              {!basic && <AlignRight as='th'>Created</AlignRight>}
             </tr>
           </thead>
           <tbody>
@@ -48,7 +48,7 @@ export function ListView({
                 </ClassCell>
                 {!basic && (
                   <AlignRight>
-                    <LastCommit resource={resource} />
+                    <Created resource={resource} />
                   </AlignRight>
                 )}
               </TableRow>
@@ -85,7 +85,7 @@ function Title({ resource }: CellProps): JSX.Element {
   );
 }
 
-function LastCommit({ resource }: CellProps): JSX.Element {
+function Created({ resource }: CellProps): JSX.Element {
   const createdAt = useCreatedAt(resource);
   const createdBy = useCreatedBy(resource);
 

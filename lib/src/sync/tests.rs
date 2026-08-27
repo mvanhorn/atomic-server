@@ -615,7 +615,6 @@ mod peer_sync_tests {
         let opts = crate::commit::CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             update_index: true,
             ..crate::commit::CommitOpts::no_validations_no_index()
@@ -769,7 +768,6 @@ mod peer_sync_tests {
         let opts = crate::commit::CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             update_index: true,
             ..crate::commit::CommitOpts::no_validations_no_index()
@@ -879,7 +877,6 @@ mod peer_sync_tests {
         let opts = crate::commit::CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             update_index: true,
             ..crate::commit::CommitOpts::no_validations_no_index()
@@ -1589,7 +1586,6 @@ mod peer_sync_tests {
         let opts = crate::commit::CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             update_index: true,
             ..crate::commit::CommitOpts::no_validations_no_index()

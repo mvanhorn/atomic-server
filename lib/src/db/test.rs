@@ -1341,7 +1341,6 @@ async fn did_loro_only_commit_sled() {
     let opts = CommitOpts {
         validate_signature: true,
         validate_timestamp: false,
-        validate_previous_commit: false,
         validate_loro_causality: false,
         validate_rights: true,
         validate_schema: true,
@@ -1395,7 +1394,6 @@ async fn loro_non_property_container_survives_commit_roundtrip() {
     let opts = CommitOpts {
         validate_signature: true,
         validate_timestamp: false,
-        validate_previous_commit: false,
         validate_loro_causality: true,
         validate_rights: true,
         validate_schema: true,
@@ -1828,7 +1826,6 @@ async fn find_resource_scoped_to_its_drive() {
         validate_signature: true,
         validate_timestamp: false,
         validate_rights: true,
-        validate_previous_commit: false,
         validate_loro_causality: false,
         validate_for_agent: Some(agent.subject.to_string()),
         update_index: true,

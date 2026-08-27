@@ -99,11 +99,11 @@ peer".
 
 A peer fetches the current state of a resource as a binary Loro snapshot. The
 responder should set `HAS_COMMIT_ID` and include the resource's current
-`lastCommit` subject so the requester can build follow-up commits with a
-correct `previousCommit` pointer. Without this field a client that received
-state only over WS has no way to know which commit produced the state and may
-incorrectly mark its next save as a genesis commit (the resource exists, so
-the server rejects it).
+`lastCommit` id so the requester can stamp `_lastCommit` and not mis-detect
+the next save as genesis. That id is a receipt, not a refetchable resource.
+Without this field a client that received state only over WS has no way to
+know the resource already exists and may incorrectly mark its next save as
+genesis (the resource exists, so the server rejects it).
 
 > Implementation note: Both subscription pushes (`PUSH` flag) and direct GET responses carry the `lastCommit` identifier as `commit_id` when available, enabling the recipient to maintain the correct version history.
 

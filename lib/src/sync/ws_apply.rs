@@ -343,7 +343,6 @@ pub async fn apply_commit_json(store: &Db, body: &str) -> AtomicResult<()> {
         let opts = CommitOpts {
             validate_signature: true,
             validate_timestamp: false,
-            validate_previous_commit: false,
             validate_rights: false,
             update_index: true,
             ..CommitOpts::no_validations_no_index()

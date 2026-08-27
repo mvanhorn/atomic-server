@@ -2008,8 +2008,8 @@ msgid "Class"
 msgstr ""
 
 #: src/views/FolderPage/ListView.tsx
-msgid "Last Modified"
-msgstr ""
+msgid "Created"
+msgstr "Erstellt"
 
 #: src/views/Article/ArticlePage.tsx
 msgid "Children"
@@ -2725,10 +2725,6 @@ msgstr ""
 #: src/routes/History/HistoryDesktopView.tsx
 #: src/routes/History/HistoryMobileView.tsx
 msgid "Restore this version"
-msgstr ""
-
-#: src/routes/History/HistoryDesktopView.tsx
-msgid "Show Commit"
 msgstr ""
 
 #. 0: resource.title

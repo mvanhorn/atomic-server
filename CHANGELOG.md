@@ -9,7 +9,9 @@ See [STATUS.md](server/STATUS.md) to learn more about which features will remain
   commits are not stored as resources after apply (genesis and
   rights/parent/destroy stay). Loro binaries are not KV-index keys. The
   `/commits` collection is not created. UI reads author/dates from the
-  resource, not by fetching `did:ad:commit:` rows.
+  resource, not by fetching `did:ad:commit:` rows. Clients no longer chain
+  `previousCommit`; apply no longer has a previous-commit validation gate.
+  History no longer offers a "Show Commit" link at a discarded envelope.
 
 
 ## [v0.41.0-beta.2] - 2026-08-01
