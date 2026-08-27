@@ -4,175 +4,150 @@
 > [`commit-retention-and-state-certificates.md`](./commit-retention-and-state-certificates.md)
 > and [`authorization-sync.md`](./authorization-sync.md).
 >
-> Product goal: the History page is a list of **verifiable changes** —
-> who changed what, when, with cryptographic proof. Loro is the *what*;
-> the signed commit envelope is the *who / when / proof*.
+> Product goal: History is a list of **verifiable changes** — who, what,
+> when, with cryptographic proof — for **every replica**, including a
+> newly invited user. Same bar as `git clone` then `git log`.
 
 ## Goal
 
-Each row in History should be checkable:
+A new user who syncs a drive must be able to validate the log. Not only
+the node that happened to see the live `COMMIT`. If they cannot, we have
+not replaced what stored commits used to give.
+
+Each History row:
 
 | Shown | Source | Proof |
 | --- | --- | --- |
-| **What** | Loro checkout / diff against the previous version | The oplog is the document |
-| **When** | Envelope `createdAt` (not the Loro peer timestamp) | Inside the signed JSON |
+| **What** | Loro checkout / diff | The oplog is the document |
+| **When** | Envelope `createdAt` | Inside the signed JSON |
 | **Who** | Envelope `signer` | Ed25519 over that JSON |
-| **Proof** | Envelope `signature`, verifiable from the agent's public key | Same bytes `/commit` accepted |
+| **Proof** | Envelope `signature` | Same bytes `/commit` accepted |
 
-Today History is only the first column. `VersionTitle` renders Loro's
-timestamp and `peer {id}…` — a random CRDT peer, not an Agent. The old
-“Show Commit” button navigated to `lastCommit`, which 404s for content
-edits because those envelopes are discarded after apply.
+Today History is Loro-only (`Edited … by peer {hex}`). Content envelopes
+are discarded after apply. A clone gets the document, not the log.
 
-Genesis is already verifiable (inline certificate). Later edits are not.
+## Git analogy
 
-## Split of responsibilities
+| Git | Atomic |
+| --- | --- |
+| Blob / tree | Loro snapshot + oplog |
+| Commit object (author, time, tree hash, signature if signed) | Signed envelope |
+| `git clone` copies objects | Catch-up must copy envelopes **with** the snapshot |
+| `git log` | History page |
 
-```text
-Loro oplog          = mergeable document history (what)
-Signed envelope     = certificate for one write (who, when, proof)
-History UI          = join the two, per version
-Graph / /commits    = not a history store
-```
+Snapshot-only `SYNC_PUSH` is `git clone --no-checkout` of the tree with
+the `.git` directory empty. Unattributed History on a new device is that
+failure mode. It is not an acceptable default.
 
-Do not put signatures into Loro change messages. Those strings are
-plaintext (`c-…` bucketing tokens, sometimes an agent DID at genesis).
-Anyone can write any message. Strict “who” needs the **already-signed
-JSON-AD**, including `loroUpdate`.
+A linear `previousCommit` chain is **not** the git part we need (git
+also has merge commits; Loro already merges). The git part we need is
+**replicated commit objects**.
 
-Do not restore commits as an indexed class. `/commits`, `CommitDetail`
-fetch, and a Git-style `previousCommit` chain are the event-sourcing
-personality this slice removed.
-
-## Where the code is
-
-Apply still verifies the envelope, imports `loroUpdate`, then:
-
-- **Kept as graph resources:** genesis / rights / parent / destroy
-  (`AuthImpact::is_critical()`).
-- **Discarded:** ordinary content envelopes.
-- **Stamped on the resource:** `lastCommit` = `did:ad:commit:{sig}`
-  (echo-dedup, genesis detection). It is not fetchable.
-
-`getLoroHistory()` buckets oplog changes, checkouts each frontier, and
-materializes propvals. `useVersions` is local and instant — no network.
-
-## Join: Loro version ↔ envelope
-
-The join key already exists: after apply, `lastCommit` is written into
-the resource (and therefore into that version's materialized propvals).
+## Split
 
 ```text
-History version  →  propvals.lastCommit  →  envelope blob  →  verify
-                 →  Loro checkout        →  diff / snapshot
+Loro oplog       = mergeable document (what)
+Signed envelope  = commit object (who, when, proof)
+Both             = replicate together
+Graph / /commits = not a history store
 ```
 
-1. Keep the signed JSON in a **side table** keyed by
-   `did:ad:commit:{sig}` (same POST body). Not `Tree::Resources`, not
-   atoms, not `/commits`.
-2. History, for each Loro version, reads `lastCommit` from that
-   checkout. If a blob exists, show agent + `createdAt` + a verified
-   badge (client re-runs Ed25519 over the canonical JSON). If not,
-   show the version as **unattributed** (Loro-only: concurrent peer
-   sync without envelopes, legacy snapshots, local-only until drain).
-3. Diff / restore stay Loro checkouts. Proof is a property of the row,
-   not a separate commit page.
+Do not treat Loro change messages as “who.” They are plaintext.
+Do not restore `/commits` as a queryable class. The log belongs to the
+resource, like git objects belong to the repo — not to a site-wide
+commit collection.
 
-The envelope's `loroUpdate` should match the ops that produced that
-version. Server-stamped `lastCommit` is a *following* Loro change on
-the same doc; History already drops lastCommit from the content
-signature used to dedupe buckets. The join is “this version's
-checkout carries this stamp,” not “the Loro change message is the
-signature.”
+## Requirement: proofs travel with the resource
 
-## Persist: always the blob, never the class
+After apply, keep the signed envelope **on the resource’s replica
+state**, so the next `SYNC_PUSH` / OPFS snapshot / Iroh catch-up
+includes it.
 
-For History to be verifiable **by default**, the blob log is not an
-opt-in for regulated servers only. Default:
+Preferred: a sibling Loro container on the same doc (e.g. `envelopes`:
+commit-id → signed JSON-AD). Then today’s snapshot sync *is* clone of
+the log. No `/commits` class, no extra Layer 2 trailer, no “blob table
+the new user never sees.”
 
-- Persist envelope bytes beside the resource (same `Db` as the Loro
-  snapshot — server redb **and** browser OPFS — so offline History
-  still verifies local writes).
-- Do not index them. Do not list them as a class. Do not fetch them
-  from `CommitDetail` or folder columns.
+Apply:
 
-Prune / WORM / “drop blobs on this node” is ops policy on that table,
-not graph schema. Authorization-critical rows stay in the graph
-(must-retain floor). Content proof lives in the blob table.
+1. Verify envelope, import `loroUpdate` into `properties` (as now).
+2. Append the signed envelope to `envelopes` (CRDT map/list — concurrent
+   writers both land).
+3. Stamp `lastCommit` for echo-dedup / genesis detection (as now).
 
-A node that deletes blobs still has working documents and Loro
-history; History rows become unattributed instead of 404ing a commit
-resource.
+History:
 
-## Storage and sync
+```text
+Loro version  →  lastCommit / envelopes key  →  verify signature
+              →  checkout                    →  diff / restore
+```
 
-**Where.** A new KV tree on the same `Db` as the document, next to
-`Tree::LoroSnapshots` — not `Tree::Resources`, not `Tree::Blobs` (those
-are file bytes keyed by BLAKE3). Key = `did:ad:commit:{sig}`. Value =
-the signed JSON-AD POST body. Server: redb. Browser: the same tree in
-the per-agent OPFS database, so a local write is verifiable on History
-before any network.
+Missing envelope ⇒ **Unattributed** (legacy snapshot, truncated replica,
+tamper). That is an error state, not the path for a new invitee.
 
-They are not graph resources. They do not appear in `/commits`, search,
-or collections.
+Authorization-critical commits (genesis / ACL / parent / destroy) stay
+in the graph as the must-retain floor. Content envelopes live on the
+resource. Neither is a site-wide event log.
 
-**Would they sync?** Two different paths:
+## Storage
 
-| Path | Today | With envelope blobs |
-| --- | --- | --- |
-| Live write (`COMMIT` / `POST /commit`) | Envelope is the payload. Receiver applies and **drops** content envelopes. | Same payload. Receiver **keeps** the blob at apply. Proof rides the write; no extra protocol. |
-| Bulk catch-up (`SYNC_PUSH`) | Loro snapshots only. No envelopes. A newly paired device gets *what*, not signed *who*. | Snapshots still converge the document. Envelopes must be sent too, or History on that device is **Unattributed**. |
+Same `Db` as the document (server redb, browser OPFS), because they are
+part of that resource’s replica, not a server-only audit tape.
 
-So: they sync on the live path by not throwing the COMMIT body away. They
-do **not** sync on pairing/catch-up unless Layer 2 carries them (trailer
-on `SYNC_PUSH`, or a follow-up fetch of missing `lastCommit` ids). That
-is the same gap [`authorization-sync.md`](./authorization-sync.md) already
-calls Layer 2 unsigned.
+If they live **in** the Loro doc, `Tree::LoroSnapshots` already holds
+them. If they live in a side tree, bulk sync **must** send that tree
+with the snapshot — same requirement, more wire. Prefer in-doc so
+catch-up cannot forget them.
 
-Critical commits already kept in `Tree::Resources` have the same hole:
-drive snapshot sync does not walk `did:ad:commit:…` subjects. Proof has
-always travelled as the write, not as a class listing.
+Cost: the envelope repeats `loroUpdate`. That duplication is the
+verifiable object, as a git commit repeats a pointer at content. A
+header-only object (signer, createdAt, signature, hash of the change)
+is a later size win; v1 stores the full signed body so verify matches
+today’s `/commit` bytes.
 
-Cost: each blob repeats `loroUpdate` already in the snapshot. That
-duplication *is* the proof. Pruning blobs shrinks disk; History becomes
-unattributed; the document still loads.
+## Sync
+
+| Path | Must happen |
+| --- | --- |
+| Live `COMMIT` | Apply + persist envelope on the receiver (stop dropping it). |
+| Bulk `SYNC_PUSH` | Snapshot includes envelopes (in-doc) **or** the push is incomplete. A new user who only got `properties` has an unverifiable log. |
+| Offline local | OPFS snapshot includes envelopes; History verifies without network. |
+
+Layer 2 that imports a snapshot and ignores `envelopes` is a bug, not a
+mode. See unsigned `SYNC_PUSH` in
+[`authorization-sync.md`](./authorization-sync.md).
 
 ## History row (target UI)
 
-Replace `Edited {loroTime} by peer {hex}…` with:
-
-- **Verified** — `{agent name} · {createdAt}` after signature check
-- **Unattributed** — Loro time only, no agent (no blob / verify fail)
-- Diff of *what* (already built)
-- Restore (already built)
-
-No navigation to `did:ad:commit:…` as a document. The proof is on the
-row.
+- **Verified** — `{agent name} · {createdAt}` after Ed25519 check
+- **Unattributed** — warning, not the normal row (legacy / incomplete replica)
+- Diff and restore stay Loro checkouts
+- No navigation to `did:ad:commit:…` as a document
 
 ## What not to do
 
-- Treat Loro `peer` / change `message` as “who.”
-- Re-create `/commits` or `CommitDetail` fetch for dates.
-- Block current envelope simplification on this join — History is
-  Loro-only until the blob table exists; that is an honest gap, not a
-  404.
-- Require a linear `previousCommit` chain. Concurrent edits merge in
-  Loro; two verified envelopes on concurrent changes is correct.
+- Local-only blob table that live writes keep and clones never get.
+- “Unattributed is fine for new users.”
+- Re-index envelopes as Atomic resources / `/commits`.
+- Put the agent DID in the Loro change message and call it proof.
+- Require a linear `previousCommit` chain.
 
 ## Open questions
 
-1. **Match quality.** Is `lastCommit` on the checkout a reliable join
-   under concurrent writers (two envelopes, one LWW snapshot)? May
-   need the client to put `did:ad:commit:{sig}` in the change message
-   *after* sign — the delta is signed as `loroUpdate`, so the message
-   has to be part of those bytes (sign-after-export already is).
-2. **SYNC_PUSH.** Importing a Loro snapshot without the envelopes
-   yields unattributed history. Audit nodes should refuse snapshot-only
-   catch-up (Layer 2 in [`authorization-sync.md`](./authorization-sync.md)).
-3. **Blob size.** Full JSON-AD includes `loroUpdate`. That is the proof
-   of *what*. A header-only blob (signer, createdAt, signature, hash)
-   proves who/when but not the mutation unless the hash covers the
-   oplog change. Prefer storing the full signed body.
-4. **Verify in WASM.** Same `validate_signature` path the apply code
-   uses; History should fail closed (Unattributed) on mismatch, not
-   show a forged signer.
+1. **Container shape.** Loro map `envelopes[commitId] = json` vs list of
+   signed strings. Map is idempotent on retry (same id).
+2. **Who writes the container.** Client includes it in `loroUpdate` at
+   sign time (envelope must then sign a doc that already contains itself
+   — chicken/egg) **or** server appends after verify (replica that only
+   has the client delta must apply the same append). Server-append after
+   verify is simpler; two replicas that both apply the same COMMIT must
+   append the same bytes so the CRDT converges.
+3. **Concurrent edits.** Two envelopes, one merged document: both rows
+   verified, diffs from Loro. Correct, like two git commits on diverging
+   branches that later merge.
+4. **Size / prune.** Full bodies grow the snapshot. Compaction that drops
+   old envelopes is a policy on that container, and it *removes*
+   verifiability for those versions — same as `git replace` / shallow
+   clone. Default is full log.
+5. **Verify in WASM.** Same signature check as apply; fail closed to
+   Unattributed, never display a forged signer.

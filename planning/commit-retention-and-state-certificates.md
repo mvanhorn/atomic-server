@@ -10,8 +10,8 @@
 >
 > **Shipped since:** ordinary content commits are discarded after apply; the
 > must-retain floor (`AuthImpact::is_critical`) stays. History is Loro-only
-> today (what, not signed who). Target UX — a list of verifiable changes —
-> is [`auditability-loro-history.md`](./auditability-loro-history.md).
+> today. Target: a new replica can verify who changed what (`git clone` of
+> the log) — [`auditability-loro-history.md`](./auditability-loro-history.md).
 
 ## Thesis
 
