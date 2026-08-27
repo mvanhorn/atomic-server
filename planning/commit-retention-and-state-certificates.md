@@ -9,9 +9,9 @@
 > "Per-resource retention" below.
 >
 > **Shipped since:** ordinary content commits are discarded after apply; the
-> must-retain floor (`AuthImpact::is_critical`) stays. Loro oplog is not a
-> signed audit trail — see
-> [`auditability-loro-history.md`](./auditability-loro-history.md).
+> must-retain floor (`AuthImpact::is_critical`) stays. History is Loro-only
+> today (what, not signed who). Target UX — a list of verifiable changes —
+> is [`auditability-loro-history.md`](./auditability-loro-history.md).
 
 ## Thesis
 
