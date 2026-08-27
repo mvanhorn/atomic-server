@@ -80,6 +80,14 @@ pub const SIGNATURE: &str = "https://atomicdata.dev/properties/signature";
 pub const PREVIOUS_COMMIT: &str = "https://atomicdata.dev/properties/previousCommit";
 pub const LAST_COMMIT: &str = "https://atomicdata.dev/properties/lastCommit";
 pub const IS_GENESIS: &str = "https://atomicdata.dev/properties/isGenesis";
+
+/// True for a property stored on the resource row but never in the Loro
+/// document. Today that is only [`LAST_COMMIT`]: a projection of the latest
+/// applied envelope id. Writing it into the CRDT bloated every save with a
+/// bookkeeping op and is why the causality guard had to skip it.
+pub fn is_derived_overlay_property(property: &str) -> bool {
+    property == LAST_COMMIT
+}
 /// Inline, immutable self-verifying genesis certificate (binary; base64 in
 /// JSON-AD). Carries signer/createdAt/nonce/parent/drive; the DID is
 /// `did:ad:<sign(cert)>`. Decoded for race-free, drive-first rights checks.

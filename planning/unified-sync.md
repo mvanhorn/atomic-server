@@ -989,13 +989,13 @@ work in that plan's Phase P0, not a decision-gated maybe.
 - [ ] Drain targets a transport, not an endpoint URL.
 - [ ] Pipelined `COMMIT` (out-of-order ack matching by `request_id`).
 - [ ] Genesis + first delta in one pipelined pair.
-- [ ] Shrink `COMMIT_OK` to `[request_id] [commit_id]`.
+- [x] Shrink `COMMIT_OK` to `[request_id] [commit_id]`.
 - [ ] Flag cleanups: `HAS_COMMIT_ID` always, drop `PUSH`, fold `SYNC_OK` into
   empty `SYNC_DIFF` (see [`sign-at-drain.md`](./sign-at-drain.md)).
 
 ### Phase 3 — Layer 2 provenance
 
-- [ ] `SYNC_PUSH` entries carry `lastCommit` (+ signed envelope where available).
+- [x] `SYNC_PUSH` entries carry `lastCommit` (+ signed envelope where available).
 - [ ] Import verifies/records provenance; policy decision for same-agent replicas.
 - [x] Decide Option A vs B for Iroh — **Option B** (2026-07-02,
   [`serverless-p2p.md`](./serverless-p2p.md)); harden per that plan's P0/P1.

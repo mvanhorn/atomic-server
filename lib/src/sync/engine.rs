@@ -157,7 +157,8 @@ pub async fn handle_frame(
                     let request_id = decoded.request_id;
                     match apply_peer_commit(store, decoded.commit_json).await {
                         Ok(commit_json) => {
-                            vec![protocol::encode_commit_ok(request_id, &commit_json)]
+                            let commit_id = protocol::commit_id_from_ok_body(&commit_json);
+                            vec![protocol::encode_commit_ok(request_id, &commit_id)]
                         }
                         Err(e) => {
                             let msg = e.to_string();
@@ -780,7 +781,7 @@ pub async fn handle_sync_vv_filtered(
     let mut pull_from: std::collections::HashMap<String, std::collections::HashMap<String, i32>> =
         std::collections::HashMap::new();
     let mut remove: Vec<String> = Vec::new();
-    let mut push_entries: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut push_entries: Vec<(String, Vec<u8>, Option<String>)> = Vec::new();
 
     for (subject, server_vv) in &server_vvs {
         // Check read permission
@@ -820,7 +821,8 @@ pub async fn handle_sync_vv_filtered(
                         let delta = doc.export_updates_since(&client_loro_vv);
 
                         if !delta.is_empty() {
-                            push_entries.push((subject.clone(), delta));
+                            let last_commit = last_commit_of(&resource);
+                            push_entries.push((subject.clone(), delta, last_commit));
                         }
                     }
                 }
@@ -854,7 +856,7 @@ pub async fn handle_sync_vv_filtered(
         } else {
             if let Ok(Some(snapshot_bytes)) = store.kv.get(Tree::LoroSnapshots, subject.as_bytes())
             {
-                push_entries.push((subject.clone(), snapshot_bytes));
+                push_entries.push((subject.clone(), snapshot_bytes, last_commit_of(&resource)));
             }
         }
     }
@@ -878,7 +880,7 @@ pub async fn handle_sync_vv_filtered(
         }
     }
 
-    let push_subjects: Vec<String> = push_entries.iter().map(|(s, _)| s.clone()).collect();
+    let push_subjects: Vec<String> = push_entries.iter().map(|(s, _, _)| s.clone()).collect();
 
     tracing::info!(
         "SYNC_VV: drive {} — {} to push, {} to pull, {} to remove",
@@ -898,14 +900,14 @@ pub async fn handle_sync_vv_filtered(
     ));
 
     if !push_entries.is_empty() {
-        let entries: Vec<(&str, &[u8])> = push_entries
+        let entries: Vec<(&str, &[u8], Option<&str>)> = push_entries
             .iter()
-            .map(|(s, b)| (s.as_str(), b.as_slice()))
+            .map(|(s, b, c)| (s.as_str(), b.as_slice(), c.as_deref()))
             .collect();
         // `encode_sync_push_chunks` splits by entry count + byte budget and
         // marks the final frame LAST. Each frame is independent on the wire;
         // the receiver loops reading SYNC_PUSH until it sees LAST.
-        for chunk in protocol::encode_sync_push_chunks(drive, &entries) {
+        for chunk in protocol::encode_sync_push_chunks_with_ids(drive, &entries) {
             frames.push(chunk);
         }
     }
@@ -1092,6 +1094,12 @@ pub async fn import_sync_push(
             continue;
         }
 
+        if let Some(id) = &entry.last_commit {
+            if !id.is_empty() {
+                resource.stamp_last_commit(id.as_str().into());
+            }
+        }
+
         // Log what properties arrived
         let has_strokes = resource
             .get("https://atomicdata.dev/ontology/canvas/strokeData")
@@ -1182,7 +1190,7 @@ pub async fn collect_readable_snapshots(
     agent: &crate::agents::ForAgent,
     subjects: &[String],
     paired_peer: Option<&str>,
-) -> Vec<(String, Vec<u8>)> {
+) -> Vec<(String, Vec<u8>, Option<String>)> {
     // Resolved once: a paired peer's entitlement is "whatever we ourselves may
     // read", so it is our own identity that answers, not the peer's.
     let own_agent = if paired_peer.is_some_and(|node| peer_is_paired(store, node)) {
@@ -1197,7 +1205,7 @@ pub async fn collect_readable_snapshots(
     let mut entries = Vec::new();
     for subject in subjects {
         let subj = crate::Subject::from_raw(subject, store.get_base_domain().as_deref());
-        match store.get_resource(&subj).await {
+        let last_commit = match store.get_resource(&subj).await {
             Ok(resource) => {
                 let mut readable = crate::hierarchy::check_read(store, &resource, agent)
                     .await
@@ -1226,15 +1234,24 @@ pub async fn collect_readable_snapshots(
                     );
                     continue;
                 }
+                last_commit_of(&resource)
             }
             Err(_) => continue,
-        }
+        };
         if let Ok(Some(snapshot)) = store
             .kv
             .get(crate::db::trees::Tree::LoroSnapshots, subject.as_bytes())
         {
-            entries.push((subject.clone(), snapshot));
+            entries.push((subject.clone(), snapshot, last_commit));
         }
     }
     entries
+}
+
+fn last_commit_of(resource: &crate::Resource) -> Option<String> {
+    resource
+        .get(crate::urls::LAST_COMMIT)
+        .ok()
+        .map(|v| v.to_string())
+        .filter(|s| !s.is_empty())
 }

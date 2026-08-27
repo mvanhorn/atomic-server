@@ -1,10 +1,11 @@
 import {
-  commits,
   core,
   Resource,
+  useCreatedBy,
   useResource,
   useString,
   useTitle,
+  useUpdatedAt,
 } from '@tomic/react';
 
 import { styled } from 'styled-components';
@@ -85,11 +86,12 @@ function Title({ resource }: CellProps): JSX.Element {
 }
 
 function LastCommit({ resource }: CellProps): JSX.Element {
-  const [commit] = useString(resource, commits.properties.lastCommit);
+  const updatedAt = useUpdatedAt(resource);
+  const createdBy = useCreatedBy(resource);
 
   return (
     <LinkWrapper>
-      <CommitDetail short commitSubject={commit} />
+      <CommitDetail short createdAt={updatedAt} createdBy={createdBy} />
     </LinkWrapper>
   );
 }

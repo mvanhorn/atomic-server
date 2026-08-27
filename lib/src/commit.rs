@@ -1025,15 +1025,12 @@ impl Commit {
 
         let commit_resource: Resource = commit.into_resource(store).await?;
 
-        // Set the `lastCommit` to the newly created Commit
+        // lastCommit is a non-CRDT projection of the envelope we just
+        // applied. Writing it into the Loro doc used to add a bookkeeping
+        // op on every save (see planning/commits-as-envelopes.md).
         applied
             .resource_new
-            .set(
-                urls::LAST_COMMIT.to_string(),
-                Value::AtomicUrl(commit_resource.get_subject().clone()),
-                store,
-            )
-            .await?;
+            .stamp_last_commit(commit_resource.get_subject().clone());
 
         let destroyed = commit.destroy.unwrap_or(false);
 
@@ -1335,7 +1332,10 @@ impl CommitBuilder {
     /// Creates the Commit and signs it using a signature.
     /// Does not send it - see [atomic_lib::client::post_commit].
     /// Private key is the base64 encoded pkcs8 for the signer.
-    /// Sets the `previousCommit` using the `lastCommit`.
+    /// `previousCommit` is optional audit metadata — callers that want a
+    /// chain (the TS client still sets it) put it on the builder. This
+    /// method does not derive one from `lastCommit`; Loro, not the commit
+    /// chain, is the causal authority.
     /// Returns true if this builder has any pending change that would
     /// produce a non-empty commit. Used by callers (`Resource::save`,
     /// `Resource::save_locally`) to skip a sign+apply round-trip when
@@ -1357,10 +1357,6 @@ impl CommitBuilder {
         store: &impl Storelike,
         resource: &Resource,
     ) -> AtomicResult<Commit> {
-        if let Ok(last) = resource.get(urls::LAST_COMMIT) {
-            self.previous_commit = Some(last.to_string());
-        }
-
         // If the resource has a live Loro doc but no snapshot was eagerly
         // exported to the commit builder, export it now (single export).
         // Skip when `set`/`remove` are pending — sign_at must merge those onto
@@ -2804,7 +2800,8 @@ mod test {
             .unwrap();
         let mut builder2 = CommitBuilder::new(subject.into());
         builder2.set_loro_update(client_doc.export_snapshot());
-        // `sign()` auto-fills previous_commit from the resource's lastCommit.
+        // previousCommit is optional audit metadata; the TS client still
+        // sets it, but sign() no longer auto-fills a causal chain.
         let commit2 = builder2.sign(&agent, &store, &after_first).await.unwrap();
         store.apply_commit(commit2, &OPTS).await.unwrap();
 
@@ -2813,6 +2810,58 @@ mod test {
             after_second.get(crate::urls::NAME).unwrap().to_string(),
             "Ne",
             "commit 2 should rename name to Ne — if this fails, sequential commits aren't merging properly"
+        );
+
+        let last = after_second
+            .get(crate::urls::LAST_COMMIT)
+            .expect("apply stamps lastCommit as a propval overlay");
+        assert!(
+            last.to_string().starts_with("did:ad:commit:"),
+            "lastCommit overlay should be a commit DID, got {last}"
+        );
+        let doc = after_second.build_state_doc().unwrap();
+        assert!(
+            !doc.get_all_properties()
+                .contains_key(crate::urls::LAST_COMMIT),
+            "lastCommit must not be a Loro property"
+        );
+    }
+
+    /// lastCommit is a propval overlay: apply stamps it, rematerialize
+    /// keeps it, and a fresh Loro seed does not write it as a CRDT op.
+    #[tokio::test]
+    async fn last_commit_is_propval_overlay_not_in_loro() {
+        let (store, agent) = store_with_known_agent().await;
+        let subject = "https://localhost/last_commit_overlay";
+
+        let client_doc = crate::loro::AtomicLoroDoc::new();
+        client_doc
+            .set_property(crate::urls::NAME, &Value::String("Overlay".into()))
+            .unwrap();
+        client_doc
+            .set_property(crate::urls::SHORTNAME, &Value::String("ov".into()))
+            .unwrap();
+        client_doc
+            .set_property(crate::urls::DESCRIPTION, &Value::String("d".into()))
+            .unwrap();
+
+        let empty = Resource::new(subject.into());
+        let mut builder = CommitBuilder::new(subject.into());
+        builder.set_loro_update(client_doc.export_snapshot());
+        let commit = builder.sign(&agent, &store, &empty).await.unwrap();
+        store.apply_commit(commit, &OPTS).await.unwrap();
+
+        let loaded = store.get_resource(&subject.into()).await.unwrap();
+        let last = loaded
+            .get(crate::urls::LAST_COMMIT)
+            .expect("get_resource must restore the lastCommit overlay after rematerialize");
+        assert!(last.to_string().starts_with("did:ad:commit:"));
+
+        let doc = loaded.build_state_doc().unwrap();
+        assert!(
+            !doc.get_all_properties()
+                .contains_key(crate::urls::LAST_COMMIT),
+            "seeding a state doc from propvals must skip lastCommit"
         );
     }
 

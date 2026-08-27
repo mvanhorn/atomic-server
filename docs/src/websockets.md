@@ -38,13 +38,13 @@ A connection is established over a WebSocket (typically to a responder's `/ws` e
 | `0x11` | `UPDATE`        | either      | `[flags: u8] [request_id: u16] [subject_len: u16] [subject] [commit_id_len: u16 (optional)] [commit_id (optional)] [loro_bytes...]` |
 | `0x12` | `DESTROY`       | either      | `[request_id: u16] [subject: string]`                                                                                               |
 | `0x13` | `COMMIT`        | Init → Resp | `[request_id: u16] [commit_json_utf8]`                                                                                              |
-| `0x14` | `COMMIT_OK`     | Resp → Init | `[request_id: u16] [server_commit_json_utf8]`                                                                                       |
+| `0x14` | `COMMIT_OK`     | Resp → Init | `[request_id: u16] [commit_id_utf8]`                                                                                                |
 | `0x20` | `SUB`           | either      | UTF-8 String (Subject)                                                                                                              |
 | `0x21` | `UNSUB`         | either      | UTF-8 String (Subject)                                                                                                              |
 | `0x30` | `SYNC`          | either      | `[drive_len: u16] [drive] [hash_len: u16] [hash] [json_vv]`                                                                         |
 | `0x31` | `SYNC_OK`       | either      | `[drive_len: u16] [drive]`                                                                                                          |
 | `0x32` | `SYNC_DIFF`     | either      | `[drive_len: u16] [drive] [json_diff]`                                                                                              |
-| `0x33` | `SYNC_PUSH`     | either      | `[drive_len: u16] [drive] [flags: u8] [count: u16] entries...` (chunked; bit 0 = LAST)                                              |
+| `0x33` | `SYNC_PUSH`     | either      | `[drive_len: u16] [drive] [flags: u8] [count: u16] entries... [commit_id_len: u16] [commit_id] × count` (chunked; bit 0 = LAST, bit 1 = HAS_COMMIT_ID) |
 | `0x34` | `BLOB_REQUEST`  | either      | `[blake3_hash: 32 bytes]`                                                                                                           |
 | `0x35` | `BLOB_RESPONSE` | either      | `[blake3_hash: 32 bytes] [bytes...]`                                                                                                |
 | `0x36` | *reserved*      | —           | Previously `QUERY_UPDATE`. Retired in `planning/drop-query-update.md`; the `SUBSCRIBE_QUERY` text-frame registrar is still supported, but membership changes are now delivered as plain `UPDATE` (0x11) / `DESTROY` (0x12) frames. |
@@ -116,12 +116,14 @@ commit parsing are unaffected.
 
 ```
 -> COMMIT (0x13) [request_id] [commit_json]
-<- COMMIT_OK (0x14) [request_id] [server_commit_json]
+<- COMMIT_OK (0x14) [request_id] [commit_id]
 <- UPDATE (0x11) ...     # sent to OTHER subscribers, not the origin connection
 ```
 
-`server_commit_json` is the same created commit resource HTTP `/commit` returns
-today (JSON-AD `did:ad:commit:<sig>`). On failure, the responder emits
+`commit_id` is `did:ad:commit:<sig>`. The caller already holds the envelope it
+signed; the ack only needs the id to stamp `lastCommit`. Older servers sent the
+full JSON-AD commit resource here — clients accept either. HTTP `/commit` still
+returns the full JSON-AD resource. On failure, the responder emits
 `ERROR (0x03)` with the matching `request_id` and a machine-readable `code`
 (see the `error_code` module in `lib/src/sync/protocol.rs`):
 
@@ -182,7 +184,7 @@ Drive sync ensures two peers have the same set of resources. It uses Loro CRDT v
 
 1. **`SYNC (0x30)`**: Peers exchange drive-level hashes and version vectors.
 2. **`SYNC_DIFF (0x32)`**: A peer determines which resources to `pull`, `push`, and `remove`.
-3. **`SYNC_PUSH (0x33)`**: Peers exchange binary Loro deltas for missing resources, **chunked**. Each chunk carries `[drive] [flags: u8] [count: u16] [entries...]`; bit 0 of `flags` is `LAST`. Senders cap chunks at 100 entries or 1 MiB (whichever fills first); receivers loop reading `SYNC_PUSH` frames until they see a chunk with `LAST` set. An empty push still emits a single `LAST`-flagged frame so the receiver doesn't hang.
+3. **`SYNC_PUSH (0x33)`**: Peers exchange binary Loro deltas for missing resources, **chunked**. Each chunk carries `[drive] [flags: u8] [count: u16] [entries...]`; bit 0 of `flags` is `LAST`, bit 1 is `HAS_COMMIT_ID`. When `HAS_COMMIT_ID` is set, a trailer of `[commit_id_len: u16] [commit_id]` per entry follows the Loro bytes (empty id = none). The trailer is after the entries so a decoder that does not know the flag still reads every snapshot. Senders cap chunks at 100 entries or 1 MiB (whichever fills first); receivers loop reading `SYNC_PUSH` frames until they see a chunk with `LAST` set. An empty push still emits a single `LAST`-flagged frame so the receiver doesn't hang.
 
 ### `SYNC_DIFF` payload
 

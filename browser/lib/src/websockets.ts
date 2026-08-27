@@ -13,7 +13,7 @@ import { reconcile, type Item, type RemoteRange } from './rbsr.js';
 import { AtomicError, ErrorType } from './error.js';
 import {
   type Commit,
-  parseCommitJSON,
+  parseCommitOkBody,
   serializeDeterministically,
 } from './commit.js';
 import {
@@ -38,6 +38,7 @@ import {
   debugFrameInfo,
 } from './ws-v2.js';
 import { BLOB } from './urls.js';
+import { commits } from './ontologies/commits.js';
 import { hexToBytes } from './value.js';
 import { perfMark, perfSpan } from './perf-trace.js';
 
@@ -212,6 +213,7 @@ export class WSClient {
   private pendingCommits = new Map<
     number,
     {
+      sent: Commit;
       resolve: (c: Commit) => void;
       reject: (e: Error) => void;
       timer: ReturnType<typeof setTimeout>;
@@ -720,6 +722,7 @@ export class WSClient {
       }, REQUEST_TIMEOUT);
 
       this.pendingCommits.set(requestId, {
+        sent: commit,
         resolve: (c: Commit) => {
           close('ok');
           resolve(c);
@@ -878,8 +881,8 @@ export class WSClient {
         if (!pending) break;
 
         try {
-          const created = parseCommitJSON(msg.commitJson);
-          pending.resolve(created);
+          const commitId = parseCommitOkBody(msg.commitJson);
+          pending.resolve({ ...pending.sent, id: commitId });
         } catch (e) {
           pending.reject(
             e instanceof Error
@@ -987,10 +990,11 @@ export class WSClient {
           // setSource + addResources({skipCommitCompare:true})`
           // collapsed into one `applyIncoming` call per entry.
           // The chunked-final-chunk drive-sync signal stays here.
-          for (const { subject, loroBytes } of msg.entries) {
+          for (const { subject, loroBytes, lastCommit } of msg.entries) {
             this.store.applyIncoming({
               subject,
               loroBytes,
+              commitId: lastCommit,
               source: 'ws-sync-push',
             });
             const resource = this.store.resources.get(subject);
@@ -1403,7 +1407,11 @@ export class WSClient {
       this.store.removeResource(subject);
     }
 
-    const entries: Array<{ subject: string; loroBytes: Uint8Array }> = [];
+    const entries: Array<{
+      subject: string;
+      loroBytes: Uint8Array;
+      lastCommit?: string;
+    }> = [];
     const clientDb = this.store.getClientDb();
 
     for (const subject of diff.pull) {
@@ -1428,7 +1436,14 @@ export class WSClient {
       }
 
       if (loroBytes && loroBytes.length > 0) {
-        entries.push({ subject, loroBytes });
+        const lastCommit = this.store.resources
+          .get(subject)
+          ?.get(commits.properties.lastCommit) as string | undefined;
+        entries.push({
+          subject,
+          loroBytes,
+          lastCommit: lastCommit || undefined,
+        });
       }
     }
 

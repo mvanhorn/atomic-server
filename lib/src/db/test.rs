@@ -89,8 +89,7 @@ async fn basic() {
 
 #[tokio::test]
 /// Check if a resource is properly removed from the DB after a delete command.
-/// Also counts commits.
-async fn destroy_resource_and_check_collection_and_commits() {
+async fn destroy_resource_and_check_collection() {
     let store = Db::init_temp("counter").await.unwrap();
     crate::test_utils::setup_test_env(&store).await.unwrap();
     let for_agent = &ForAgent::Public;
@@ -114,20 +113,6 @@ async fn destroy_resource_and_check_collection_and_commits() {
         "There should be 1 agent in this collection initially (the agent created during init)"
     );
 
-    // We will count the commits, and check if they've incremented later on.
-    let commits_url = "internal:/commits".to_string();
-    let commits_collection_1 = store
-        .get_resource_extended(&commits_url.as_str().into(), false, for_agent)
-        .await
-        .unwrap();
-    let commits_collection_count_1 = commits_collection_1
-        .to_single()
-        .get(crate::urls::COLLECTION_MEMBER_COUNT)
-        .unwrap()
-        .to_int()
-        .unwrap();
-    println!("Commits collection count 1: {}", commits_collection_count_1);
-
     // Create a new agent, check if it is added to the new Agents collection as a Member.
     let mut resource = crate::agents::Agent::new(None)
         .unwrap()
@@ -147,23 +132,6 @@ async fn destroy_resource_and_check_collection_and_commits() {
     assert_eq!(
         agents_collection_count_2, 2,
         "The new Agent resource did not increase the collection member count from 1 to 2."
-    );
-
-    let commits_collection_2 = store
-        .get_resource_extended(&commits_url.as_str().into(), false, for_agent)
-        .await
-        .unwrap();
-    let commits_collection_count_2 = commits_collection_2
-        .to_single()
-        .get(crate::urls::COLLECTION_MEMBER_COUNT)
-        .unwrap()
-        .to_int()
-        .unwrap();
-    println!("Commits collection count 2: {}", commits_collection_count_2);
-    assert_eq!(
-        commits_collection_count_2,
-        commits_collection_count_1 + 1,
-        "The commits collection did not increase after saving the resource."
     );
 
     let clone = _res.resource_new.clone().unwrap();
@@ -393,7 +361,7 @@ async fn get_extended_resource_pagination() {
         .unwrap();
     crate::test_utils::setup_test_env(&store).await.unwrap();
     let subject = format!(
-        "{}/commits?current_page=2&page_size=99999",
+        "{}/classes?current_page=2&page_size=99999",
         "http://localhost"
     );
     let for_agent = &ForAgent::Public;

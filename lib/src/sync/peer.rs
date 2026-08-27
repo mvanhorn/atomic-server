@@ -1675,11 +1675,12 @@ pub async fn sync_drive_with_peer_using_outcome(
                             )
                             .await;
                             if !entries.is_empty() {
-                                let refs: Vec<(&str, &[u8])> = entries
+                                let refs: Vec<(&str, &[u8], Option<&str>)> = entries
                                     .iter()
-                                    .map(|(s, b)| (s.as_str(), b.as_slice()))
+                                    .map(|(s, b, c)| (s.as_str(), b.as_slice(), c.as_deref()))
                                     .collect();
-                                for chunk in super::protocol::encode_sync_push_chunks(drive, &refs)
+                                for chunk in
+                                    super::protocol::encode_sync_push_chunks_with_ids(drive, &refs)
                                 {
                                     send.write_u32(chunk.len() as u32).await.map_err(io_err)?;
                                     send.write_all(&chunk).await.map_err(io_err)?;
@@ -1732,11 +1733,12 @@ pub async fn sync_drive_with_peer_using_outcome(
                     )
                     .await;
                     if !entries.is_empty() {
-                        let refs: Vec<(&str, &[u8])> = entries
+                        let refs: Vec<(&str, &[u8], Option<&str>)> = entries
                             .iter()
-                            .map(|(s, b)| (s.as_str(), b.as_slice()))
+                            .map(|(s, b, c)| (s.as_str(), b.as_slice(), c.as_deref()))
                             .collect();
-                        for chunk in super::protocol::encode_sync_push_chunks(drive, &refs) {
+                        for chunk in super::protocol::encode_sync_push_chunks_with_ids(drive, &refs)
+                        {
                             send.write_u32(chunk.len() as u32).await.map_err(io_err)?;
                             send.write_all(&chunk).await.map_err(io_err)?;
                         }

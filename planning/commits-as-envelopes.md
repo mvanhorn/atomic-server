@@ -104,27 +104,24 @@ audit dump, not a product surface.
 
 ### 2. Stop writing `lastCommit` into the Loro document
 
-Server apply currently `set`s `lastCommit` on `resource_new` after every
-commit (`commit.rs`). That is a CRDT op on bookkeeping, which:
+- [x] `lastCommit` is a propval overlay, not a Loro op (`Resource::stamp_last_commit`).
+- [x] `previousCommit` is optional audit metadata; `CommitBuilder::sign` does not auto-fill a chain.
+- [x] Default `/commits` class collection is not created.
+- [x] `CommitDetail` does not fetch `did:ad:commit:` resources.
+- [x] `docs/src/commits/intro.md` describes signed envelopes, not event-sourced history.
 
-- bloats every resource's oplog by one change per save
-- is why the causality guard must skip `LAST_COMMIT` / `CREATED_AT`
-- is why genesis-change selection had to ignore timestamps
-  (`genesis-self-verifying.md`)
-
-Keep `commit_id` on `UPDATE` / `COMMIT_OK`. Store it as a non-CRDT
-projection field (or only in the client `_lastCommit` cache, which already
-exists). Demote `previousCommit` to optional audit metadata; stop building
-the chain in `CommitBuilder.sign`.
+Writing `lastCommit` into Loro used to bloat every resource's oplog by one
+change per save, force the causality guard to skip `LAST_COMMIT` /
+`CREATED_AT`, and confuse genesis-change selection. The overlay lives on
+the resource row; `UPDATE` / `COMMIT_OK` / `SYNC_PUSH` carry the id.
 
 ### 3. One ingest, thinner wire
 
 Already specified in `unified-sync.md`; listed here so it is not forgotten
 as "commit cleanup":
 
-- `SYNC_PUSH` carries the signed envelope (or `lastCommit` + bytes past
-  it). `import_sync_push` stops being a second unsigned authority (F1).
-- Shrink `COMMIT_OK` to `[request_id][commit_id]`.
+- [x] `SYNC_PUSH` entries carry `lastCommit` (id-only trailer; signed envelope still open).
+- [x] Shrink `COMMIT_OK` to `[request_id] [commit_id]`. HTTP `/commit` still returns JSON-AD.
 - Pipeline outbox `COMMIT` frames; optional later `COMMIT_BATCH`.
 - HTTP `/commit` stays as fallback until the engine ingest is the only
   apply path, then it becomes a thin wrapper.
@@ -139,8 +136,8 @@ happened.
 | `CommitBuilder.set` / `remove` / `push` (Rust + TS) | Server already rejects `set`/`push`/`remove` on the wire. Keep a server-internal conversion at `sign_at` only until `Resource::save` is doc-first; delete from the TS builder and public commit JSON. |
 | `browser/lib/src/commit.ts` `set`/`push`/`remove` | Dead on the wire; still in `hasUnsavedChanges` and tests. |
 | `materializeCommitLocally` / `did:ad:commit:` fetch | History UI reads oplog; author/time from propvals. |
-| `CommitDetail` commit-fetch fallback | Require `createdAt`/`createdBy`; drop `useResource(commitSubject)`. |
-| `docs/src/commits/intro.md` | Stop selling event-sourced history. Commits = signed envelopes. |
+| `CommitDetail` commit-fetch fallback | [x] Dropped. Callers pass `createdAt`/`createdBy` from the resource. |
+| `docs/src/commits/intro.md` | [x] Signed envelopes, not event-sourced history. |
 | Tests that `get_resource(did:ad:commit:…)` | Gate on retention policy. |
 
 `lib/src/commit.rs` (~3k lines, much of it tests) stays — that is verify +
@@ -162,10 +159,11 @@ misnamed.
 2. **`maybe_store_commit` + `retention=none` test mode** — [x] policy +
    apply gate + `ATOMIC_COMMIT_RETENTION`. Default still `full`. No
    bounded `recent` cache yet.
-3. **`lastCommit` out of Loro** — unblocks cleaner apply and smaller docs.
-4. **Layer 2 provenance** — then HTTP `/commit` can shrink.
-5. **UI + spec** — no commit fetches; docs match the envelope model.
-6. Default retention → `recent`.
+3. **`lastCommit` out of Loro** — [x] overlay + `SYNC_PUSH` trailer.
+4. **Layer 2 provenance** — id-only on `SYNC_PUSH` shipped; signed envelope
+   on catch-up still open (`unified-sync.md` F1). HTTP `/commit` stays.
+5. **UI + spec** — [x] no commit fetches; docs match the envelope model.
+6. Default retention → `recent`. Still blocked on a real bounded cache.
 
 ## Related
 

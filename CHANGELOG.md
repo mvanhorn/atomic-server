@@ -9,6 +9,10 @@ See [STATUS.md](server/STATUS.md) to learn more about which features will remain
   remains `full` (keep every commit resource). `ATOMIC_COMMIT_RETENTION=none`
   keeps only genesis and authorization-critical commits (rights / parent /
   destroy). Loro binary payloads are no longer written into the KV indexes.
+  `lastCommit` is a propval overlay, not a Loro op. `COMMIT_OK` acks with the
+  commit id only. `SYNC_PUSH` carries that id next to each snapshot. The
+  `/commits` collection is no longer created; UI reads author/dates from the
+  resource, not by fetching `did:ad:commit:` resources.
 
 
 ## [v0.41.0-beta.2] - 2026-08-01

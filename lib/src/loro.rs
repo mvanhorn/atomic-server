@@ -253,12 +253,12 @@ impl AtomicLoroDoc {
     /// derived from it — the change travels inside the resource's own Loro doc,
     /// so no commit resource is needed. Returns `None` for an empty oplog.
     ///
-    /// Selection is by **Lamport, not wall-clock timestamp**: server-authored
-    /// follow-up changes (e.g. setting `lastCommit` after apply) carry a
-    /// second-resolution timestamp that can sort *before* the client's
-    /// millisecond-precise genesis within the same second, which would
-    /// mis-pick a later, message-less change as the genesis. Lamport is the
-    /// causal order — the founding change is always the minimum.
+    /// Selection is by **Lamport, not wall-clock timestamp**: historically
+    /// a server-authored follow-up (`lastCommit` written into Loro) carried a
+    /// second-resolution timestamp that could sort *before* the client's
+    /// millisecond-precise genesis within the same second. `lastCommit` is
+    /// now a propval overlay, but Lamport remains the causal order — the
+    /// founding change is always the minimum.
     pub fn genesis_change(&self) -> Option<GenesisChange> {
         let frontier_ids: Vec<loro::ID> = self.doc.oplog_frontiers().iter().collect();
 

@@ -29,8 +29,8 @@ export interface CommitBuilderI {
   /** If true, the resource must be deleted. https://atomicdata.dev/properties/destroy */
   destroy?: boolean;
   /**
-   * URL of the previous Commit, used by the receiver to make sure that we're
-   * having the same current version.
+   * Optional audit pointer at a previous envelope. Not a causal gate —
+   * Loro merges concurrent edits. The receiver no longer requires it.
    */
   previousCommit?: string;
   /** Whether this is the first commit for a Resource. */
@@ -57,6 +57,28 @@ export function commitIdOf(commit: Commit): string | undefined {
     (commit.id as string | undefined) ??
     (commit.signature ? `did:ad:commit:${commit.signature}` : undefined)
   );
+}
+
+/**
+ * COMMIT_OK body: new servers send `did:ad:commit:{sig}`; older servers sent
+ * the full JSON-AD commit resource.
+ */
+export function parseCommitOkBody(body: string): string {
+  const trimmed = body.trim();
+
+  if (trimmed.startsWith('{')) {
+    try {
+      const obj = JSON.parse(trimmed) as Record<string, unknown>;
+      if (typeof obj['@id'] === 'string') return obj['@id'];
+      if (typeof obj[commits.properties.signature] === 'string') {
+        return `did:ad:commit:${obj[commits.properties.signature]}`;
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  return trimmed;
 }
 
 export function getTimestampNow(): number {

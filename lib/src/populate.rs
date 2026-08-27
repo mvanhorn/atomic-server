@@ -222,7 +222,7 @@ pub async fn populate_base_models(store: &impl Storelike) -> AtomicResult<()> {
                 urls::LORO_UPDATE.into(),
             ],
             shortname: "commit".into(),
-            description: "A Commit is a signed Resource that describes how a Resource must be updated. Used for auditing, versioning and synchronization.".into(),
+            description: "A signed envelope wrapping a Loro CRDT update. Used to authorize writes. Not a queryable event log — current state lives in the resource's Loro document.".into(),
             subject: urls::COMMIT.into(),
         },
     ];
