@@ -25,7 +25,7 @@ For code examples, see [`examples/basic.rs`](examples/basic.rs) and the many tes
 - Convert Atomic Data to Rust native types
 - Resolve / parse mappings (bookmarks)
 - Validate [Atomic Schema](https://docs.atomicdata.dev/schema/intro.html)
-- [Atomic Commits](https://docs.atomicdata.dev/commits/intro.html) (transactions / delta's / changes / updates / versioning / history)
+- [Atomic Commits](https://docs.atomicdata.dev/commits/intro.html) (signed write envelopes around Loro CRDT updates)
 - Plugin system (although not very mature)
 - [Collections](https://docs.atomicdata.dev/schema/collections.html) (pagination, sorting, filtering)
 - Querying (using triple pattern fragments)
