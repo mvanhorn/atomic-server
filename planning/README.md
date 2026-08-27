@@ -50,7 +50,7 @@ Remaining work, not "this file exists."
 | [`index-performance.md`](./index-performance.md) | First tranche shipped. Structural permission-check fix is `zones.md`, not built. |
 | [`disk-storage-and-persistence-optimization.md`](./disk-storage-and-persistence-optimization.md) | **Proposal.** Full-snapshot writes, no auto-compaction, O(file) open fsync. |
 | [`virtual-drive.md`](./virtual-drive.md) | Mountable filesystem (NFS / FUSE / native cloud-sync APIs). |
-| [`commit-retention-and-state-certificates.md`](./commit-retention-and-state-certificates.md) | **Proposal.** Commits stay signed write certificates; retention is node policy. |
+| [`commit-retention-and-state-certificates.md`](./commit-retention-and-state-certificates.md) | **Active.** Commits stay signed write certificates; retention is node policy. Direction decided 2026-08-27. |
 | [`p2p-presence.md`](./p2p-presence.md) | **Proposal.** Ephemeral presence over Iroh (`EPHEMERAL 0x40`). Same-agent only. |
 | [`reticulum-sync.md`](./reticulum-sync.md) | **Proposal.** Atomic sync protocol over Reticulum. |
 | [`json-schema-code-first.md`](./json-schema-code-first.md) | **Proposal.** Code-first JSON Schema → local DID-backed Class/Property resources. |
@@ -74,6 +74,7 @@ Not top-level plans. Indexed so they do not go missing.
 
 | Document | Status |
 | --- | --- |
+| [`commits-as-envelopes.md`](./commits-as-envelopes.md) | Direction decided. Delete-list + speed/size for treating commits as signed envelopes, not queryable resources. Slice of [`commit-retention-and-state-certificates.md`](./commit-retention-and-state-certificates.md). |
 | [`unify-subscription-primitives.md`](./unify-subscription-primitives.md) | Planned. Server-side: one `Subscription` shape. Slice of [`unified-data-layer.md`](./unified-data-layer.md). |
 | [`unify-subscription-actors.md`](./unify-subscription-actors.md) | Planned. Fold LoroSyncBroadcaster into CommitMonitor. |
 | [`unify-resource-representations.md`](./unify-resource-representations.md) | Planned. Browser dual of [`loro-source-of-truth.md`](./loro-source-of-truth.md) (`Resource._cache`). |
