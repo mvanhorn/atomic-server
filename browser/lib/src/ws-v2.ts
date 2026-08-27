@@ -53,8 +53,6 @@ export const Flags = {
  *  frames until they see this bit. */
 export const SyncPushFlags = {
   LAST: 0b0001,
-  /** Trailing per-entry lastCommit ids follow the Loro bytes. */
-  HAS_COMMIT_ID: 0b0010,
 } as const;
 
 /**
@@ -183,28 +181,16 @@ export function encodeSync(
 
 export function encodeSyncPush(
   driveSubject: string,
-  entries: Array<{
-    subject: string;
-    loroBytes: Uint8Array;
-    lastCommit?: string;
-  }>,
+  entries: Array<{ subject: string; loroBytes: Uint8Array }>,
   last = true,
 ): Uint8Array {
   const driveBytes = encoder.encode(driveSubject);
   const encodedEntries = entries.map(e => ({
     subjectBytes: encoder.encode(e.subject),
     loroBytes: e.loroBytes,
-    commitIdBytes: encoder.encode(e.lastCommit ?? ''),
   }));
   const entrySize = encodedEntries.reduce(
-    (sum, e) =>
-      sum +
-      2 +
-      e.subjectBytes.length +
-      4 +
-      e.loroBytes.length +
-      2 +
-      e.commitIdBytes.length,
+    (sum, e) => sum + 2 + e.subjectBytes.length + 4 + e.loroBytes.length,
     0,
   );
 
@@ -214,7 +200,7 @@ export function encodeSyncPush(
   off = writeU16(buf, off, driveBytes.length);
   buf.set(driveBytes, off);
   off += driveBytes.length;
-  buf[off++] = (last ? SyncPushFlags.LAST : 0) | SyncPushFlags.HAS_COMMIT_ID;
+  buf[off++] = last ? SyncPushFlags.LAST : 0;
   off = writeU16(buf, off, entries.length);
 
   for (const e of encodedEntries) {
@@ -224,12 +210,6 @@ export function encodeSyncPush(
     off = writeU32(buf, off, e.loroBytes.length);
     buf.set(e.loroBytes, off);
     off += e.loroBytes.length;
-  }
-
-  for (const e of encodedEntries) {
-    off = writeU16(buf, off, e.commitIdBytes.length);
-    buf.set(e.commitIdBytes, off);
-    off += e.commitIdBytes.length;
   }
 
   return buf;
@@ -299,7 +279,6 @@ export interface DecodedSyncDiff {
 export interface DecodedSyncPushEntry {
   subject: string;
   loroBytes: Uint8Array;
-  lastCommit?: string;
 }
 
 export interface DecodedSyncPush {
@@ -395,11 +374,7 @@ const SYNC_PUSH_MAX_BYTES = 48 * 1024;
 /** Split entries into multiple SYNC_PUSH frames (last chunk flagged). */
 export function encodeSyncPushChunks(
   driveSubject: string,
-  entries: Array<{
-    subject: string;
-    loroBytes: Uint8Array;
-    lastCommit?: string;
-  }>,
+  entries: Array<{ subject: string; loroBytes: Uint8Array }>,
 ): Uint8Array[] {
   if (entries.length === 0) {
     return [encodeSyncPush(driveSubject, [], true)];
@@ -438,7 +413,6 @@ export function decodeSyncPush(data: Uint8Array): DecodedSyncPush | undefined {
   if (off1 >= data.length) return undefined;
   const flags = data[off1];
   const last = (flags & SyncPushFlags.LAST) !== 0;
-  const hasCommitId = (flags & SyncPushFlags.HAS_COMMIT_ID) !== 0;
   const [count, off2] = readU16(data, off1 + 1);
   const entries: DecodedSyncPushEntry[] = [];
   let off = off2;
@@ -449,14 +423,6 @@ export function decodeSyncPush(data: Uint8Array): DecodedSyncPush | undefined {
     const loroBytes = data.subarray(bOff, bOff + bytesLen);
     entries.push({ subject, loroBytes });
     off = bOff + bytesLen;
-  }
-
-  if (hasCommitId) {
-    for (const entry of entries) {
-      const [id, nOff] = readStr16(data, off);
-      off = nOff;
-      if (id) entry.lastCommit = id;
-    }
   }
 
   return { drive, entries, last };

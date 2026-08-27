@@ -17,7 +17,7 @@ However, it does differ in some fundamental ways.
 - Atomic only allows those who control a resource's `subject` URL endpoint to edit the data. This means that you can't add triples about something that you don't control.
 - Atomic has no separate `datatype` field, but it requires that `Properties` (the resources that are shown when you follow a `predicate` value) specify a datatype. However, it is allowed to serialize the datatype explicitly, of course.
 - Atomic has no separate `language` field.
-- Atomic Data has a native signed-write model ([Atomic Commits](../commits/intro.md)) around Loro CRDT updates, which lets nodes exchange state changes without replaying an event log
+- Atomic has a native Event (state changes) model ([Atomic Commits](../commits/intro.md)), which enables communication of state changes
 - Atomic has a native Schema model ([Atomic Schema](../schema/intro.md)), which helps developers to know what data types they can expect (string, integer, link, array)
 - Atomic does not support Named Graphs. These should not be needed, because all statements should be retrievable by fetching the Subject of a resource. However, it _is_ allowed to include other resources in a response.
 

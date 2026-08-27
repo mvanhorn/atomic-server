@@ -74,9 +74,7 @@ Three compounding behaviors, all in code:
    chain), and each carries that full-snapshot `loroUpdate`. Storage grows as
    **O(edits × resource size)**, not O(change size). (Retention is meant to be
    optional policy per `commit-retention-and-state-certificates.md`, but the
-   default keeps everything.) Commit rows also **index `loroUpdate` as a
-   base64 string** in both KV indexes — see
-   [`commits-as-envelopes.md`](./commits-as-envelopes.md).
+   default keeps everything.)
 3. **No automatic compaction; redb never reclaims dead pages.** Overwrites and
    deletes leave dead pages — the file only ever grows, even when data is
    deleted. Compaction exists but is **manual-only** (`atomic-server compact` →

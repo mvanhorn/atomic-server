@@ -1,10 +1,5 @@
 import { describe, it, vi } from 'vitest';
-import {
-  Commit,
-  commitToJsonADObject,
-  parseAndApplyCommit,
-  parseCommitOkBody,
-} from './commit.js';
+import { Commit, commitToJsonADObject, parseAndApplyCommit } from './commit.js';
 import { Store } from './store.js';
 import { Resource } from './resource.js';
 import { core } from './index.js';
@@ -411,29 +406,5 @@ describe('offline persistence', () => {
     // Saving raises it.
     await doc.save();
     expect(store.getSyncStatus().pendingDirtyCount).toBeGreaterThan(baseline);
-  });
-});
-
-describe('parseCommitOkBody', () => {
-  it('returns a bare commit id from a new server', ({ expect }) => {
-    expect(parseCommitOkBody('did:ad:commit:abc+/=')).toBe(
-      'did:ad:commit:abc+/=',
-    );
-  });
-
-  it('reads @id from a legacy JSON-AD body', ({ expect }) => {
-    expect(
-      parseCommitOkBody(
-        '{"@id":"did:ad:commit:legacy","https://atomicdata.dev/properties/signature":"ignored"}',
-      ),
-    ).toBe('did:ad:commit:legacy');
-  });
-
-  it('falls back to signature when @id is missing', ({ expect }) => {
-    expect(
-      parseCommitOkBody(
-        '{"https://atomicdata.dev/properties/signature":"sigOnly"}',
-      ),
-    ).toBe('did:ad:commit:sigOnly');
   });
 });

@@ -15,8 +15,8 @@ After that, we'll explore how Atomic Data relates to some graph technologies.
 - **Authorization built-in**. Managing rights in a hierarchy (similar to how tools like Google Drive or filesystems work) enable you to have a high degree of control over read / write rights.
 - **Built-in easy to use GUI**. Managing content on Atomic-Server can be done by anyone, as its GUI is extremely easy to use and has a ton of features.
 - **Dynamic indexing**. Indexes are created by performing Queries, resulting in great performance - without needing to manually configure indexing.
-- **Synchronization over WebSockets**. Signed [Commits](../commits/intro.md) and Loro CRDT updates flow over WebSockets, so collaborative tools stay live.
-- **Versioned**. History and undo read the Resource's Loro oplog; commits are signed envelopes that authorize a write, not an event log you replay.
+- **Synchronization over WebSockets**. All changes (called [Commits](../commits/intro.md)) can be synchronized over WebSockets, allowing you to build realtime collaborative tools.
+- **Event-sourced**. All changes are stored and reversible, giving you a full versioned history.
 - **Open source**. All code is MIT-licensed.
 
 ## Comparing Atomic Data to Neo4j
@@ -52,8 +52,8 @@ Atomic Data uses [Endpoints](../endpoints.md) for specific goals that you'd do i
  - [Paths](../core/paths.md) for traversing graphs by property
 
 And finally, data is written using [Commits](../commits/intro.md).
-Commits are signed envelopes around a Loro CRDT update. Versioning and undo
-read the document's oplog; the envelope is what makes the mutation admissible.
+Commits are very strict, as each one describes modifications to individual resources, and every Commits has to be signed.
+This means that with Atomic Data, we get _versioning + audit trails_ for all data, but at the cost of more storage requirements and a bit more expensive write process.
 
 ### Schema language and type safety
 

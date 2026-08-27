@@ -199,12 +199,12 @@ async fn drive_exchange(
                     break;
                 }
 
-                let refs: Vec<(&str, &[u8], Option<&str>)> = entries
+                let refs: Vec<(&str, &[u8])> = entries
                     .iter()
-                    .map(|(s, b, c)| (s.as_str(), b.as_slice(), c.as_deref()))
+                    .map(|(s, b)| (s.as_str(), b.as_slice()))
                     .collect();
 
-                for chunk in protocol::encode_sync_push_chunks_with_ids(drive, &refs) {
+                for chunk in protocol::encode_sync_push_chunks(drive, &refs) {
                     client.send_binary(chunk).await?;
                 }
 

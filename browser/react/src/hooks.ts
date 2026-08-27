@@ -580,32 +580,6 @@ export function useCreatedAt(resource: Resource): Date | undefined {
 }
 
 /**
- * Reactive last-edit timestamp from the resource's Loro oplog. No commit fetch.
- */
-export function useUpdatedAt(resource: Resource): Date | undefined {
-  const stable = resource.stable;
-  const subject = resource.subject;
-  const store = useStore();
-  const subscribe = useCallback(
-    (cb: () => void) => {
-      const unsubResource = store.subscribe(subject, () => cb());
-      const unsubLoro = LoroLoader.onReady(cb);
-
-      return () => {
-        unsubResource();
-        unsubLoro();
-      };
-    },
-    [store, subject],
-  );
-
-  const getSnapshot = () => stable.getUpdatedAt();
-  const ms = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-
-  return useMemo(() => (ms === undefined ? undefined : new Date(ms)), [ms]);
-}
-
-/**
  * Reactive creator derived from the resource's genesis certificate, with
  * legacy fallbacks handled by {@link Resource.getCreatedBy}. No commit fetch.
  */

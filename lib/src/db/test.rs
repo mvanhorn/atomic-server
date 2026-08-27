@@ -2326,9 +2326,10 @@ async fn partial_index_for_an_unwatched_filter_is_rebuilt() {
 
 #[tokio::test]
 #[timeout(120000)]
-async fn commit_retention_none_keeps_auth_floor_drops_content() {
-    let store = Db::init_temp("commit_retention_none").await.unwrap();
-    store.set_commit_retention(crate::CommitRetentionPolicy::None);
+async fn content_commits_are_not_stored() {
+    let store = Db::init_temp("content_commits_are_not_stored")
+        .await
+        .unwrap();
 
     let mut resource = crate::Resource::new("did:ad:placeholder".into());
     resource
@@ -2364,7 +2365,7 @@ async fn commit_retention_none_keeps_auth_floor_drops_content() {
     );
     assert!(
         store.get_resource(&content_commit).await.is_err(),
-        "ordinary content commits must not be stored under retention=none"
+        "ordinary content commits are not stored as resources"
     );
 
     let mut resource = store.get_resource(&subject).await.unwrap();

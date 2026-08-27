@@ -152,20 +152,6 @@ pub struct Opts {
     /// the `subject` field of your saved secret.
     #[clap(long, env = "ATOMIC_OWNER_AGENT")]
     pub owner_agent: Option<String>,
-
-    /// Persist signed commit resources after apply.
-    ///
-    /// `full` (default) keeps every commit as a queryable resource. `none`
-    /// keeps only genesis and authorization-critical commits (rights, parent,
-    /// destroy); ordinary content commits are discarded after the resulting
-    /// resource state is stored. `recent` is currently the same as `full`.
-    /// See planning/commits-as-envelopes.md.
-    #[clap(
-        long,
-        env = "ATOMIC_COMMIT_RETENTION",
-        default_value_t = atomic_lib::CommitRetentionPolicy::Full
-    )]
-    pub commit_retention: atomic_lib::CommitRetentionPolicy,
     /// Use the GPU (if available) for processing vector search embeddings.
     #[clap(long, env = "ATOMIC_GPU_INDEXING")]
     pub gpu_indexing: bool,

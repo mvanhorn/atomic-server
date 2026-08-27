@@ -39,7 +39,7 @@ use crate::{
     class_extender::{
         ClassExtender, ClassExtenderScope, CommitExtenderContext, GetExtenderContext,
     },
-    commit::{CommitOpts, CommitResponse, CommitRetentionPolicy},
+    commit::{CommitOpts, CommitResponse},
     db::{
         encoding::{decode_propvals, encode_propvals},
         plugin_meta::{PluginMeta, PluginMetaKey},
@@ -308,11 +308,6 @@ pub struct Db {
     /// self-hosted / local-first nodes are unrestricted; a managed node
     /// installs a concrete policy via [`Db::set_sync_policy`].
     sync_policy: Arc<RwLock<Arc<dyn crate::sync::policy::SyncPolicy>>>,
-    /// How long this node keeps signed commit resources after apply.
-    /// Defaults to [`CommitRetentionPolicy::Full`]. Install via
-    /// [`Db::set_commit_retention`]. See
-    /// `planning/commit-retention-and-state-certificates.md`.
-    commit_retention: Arc<RwLock<CommitRetentionPolicy>>,
     /// Short-lived hash → (drive-subject, requested-at) map for blob hashes
     /// the server has asked a peer for (via `BLOB_REQUEST`, emitted from
     /// `import_sync_push` for an already-admitted drive). Consulted when
@@ -341,10 +336,6 @@ fn default_sync_policy() -> Arc<RwLock<Arc<dyn crate::sync::policy::SyncPolicy>>
     Arc::new(RwLock::new(Arc::new(crate::sync::policy::OpenPolicy)))
 }
 
-fn default_commit_retention() -> Arc<RwLock<CommitRetentionPolicy>> {
-    Arc::new(RwLock::new(CommitRetentionPolicy::Full))
-}
-
 impl Db {
     /// Install a sync admission/quota policy (managed nodes). The default is
     /// [`crate::sync::policy::OpenPolicy`] (allow everything, no quotas).
@@ -360,23 +351,6 @@ impl Db {
             .read()
             .map(|guard| guard.clone())
             .unwrap_or_else(|_| Arc::new(crate::sync::policy::OpenPolicy))
-    }
-
-    /// Install a commit-resource retention policy. Default is
-    /// [`CommitRetentionPolicy::Full`]. `None` still keeps genesis and
-    /// authorization-critical commits.
-    pub fn set_commit_retention(&self, policy: CommitRetentionPolicy) {
-        if let Ok(mut guard) = self.commit_retention.write() {
-            *guard = policy;
-        }
-    }
-
-    /// The currently-installed commit retention policy.
-    pub fn commit_retention(&self) -> CommitRetentionPolicy {
-        self.commit_retention
-            .read()
-            .map(|guard| *guard)
-            .unwrap_or(CommitRetentionPolicy::Full)
     }
 
     /// Record that the server asked a peer for `hash` while importing a
@@ -438,7 +412,6 @@ impl Db {
             subject_locks: Default::default(),
             base_domain,
             sync_policy: default_sync_policy(),
-            commit_retention: default_commit_retention(),
             pending_blob_requests: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -474,7 +447,6 @@ impl Db {
             subject_locks: Default::default(),
             base_domain,
             sync_policy: default_sync_policy(),
-            commit_retention: default_commit_retention(),
             pending_blob_requests: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -508,7 +480,6 @@ impl Db {
             subject_locks: Default::default(),
             base_domain,
             sync_policy: default_sync_policy(),
-            commit_retention: default_commit_retention(),
             pending_blob_requests: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -603,7 +574,6 @@ impl Db {
             subject_locks: Default::default(),
             base_domain,
             sync_policy: default_sync_policy(),
-            commit_retention: default_commit_retention(),
             pending_blob_requests: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -754,7 +724,6 @@ impl Db {
             subject_locks: Default::default(),
             base_domain,
             sync_policy: default_sync_policy(),
-            commit_retention: default_commit_retention(),
             pending_blob_requests: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -2832,14 +2801,6 @@ impl Storelike for Db {
             .unwrap_or_else(|_| Arc::new(crate::sync::policy::OpenPolicy))
     }
 
-    fn commit_retention(&self) -> crate::CommitRetentionPolicy {
-        // Read the field directly to avoid the inherent method of the same name.
-        self.commit_retention
-            .read()
-            .map(|guard| *guard)
-            .unwrap_or(crate::CommitRetentionPolicy::Full)
-    }
-
     fn get_active_drive(&self) -> Option<String> {
         self.get_active_drive()
     }
@@ -3104,12 +3065,9 @@ impl Storelike for Db {
             }
         }
 
-        // Save the Commit to the Store only when retention policy says so.
-        // Genesis and rights/parent/destroy always persist, even under `none`.
-        if store
-            .commit_retention()
-            .should_persist(commit_response.auth_impact().is_critical())
-        {
+        // Commits are signed envelopes, not a queryable class. Keep genesis
+        // and rights/parent/destroy; drop ordinary content certificates.
+        if commit_response.auth_impact().is_critical() {
             store.add_resource_tx(&commit_response.commit_resource, &mut transaction)?;
             for atom in commit_response.commit_resource.to_atoms() {
                 store.add_atom_to_index(

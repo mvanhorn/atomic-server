@@ -1850,38 +1850,6 @@ export class Resource<C extends OptionalClass = any> {
       : undefined;
   }
 
-  /**
-   * Last-edit timestamp (Unix **ms**) from the latest Loro oplog change.
-   * Falls back to {@link getCreatedAt} when the oplog is empty. No commit
-   * fetch — last-modified used to come from `did:ad:commit:` resources.
-   */
-  public getUpdatedAt(): number | undefined {
-    const doc = this.getLoroDoc();
-
-    if (doc) {
-      let latest:
-        | { timestamp: number; lamport: number }
-        | undefined;
-
-      for (const [, changes] of doc.getAllChanges().entries()) {
-        for (const change of changes) {
-          if (!latest || change.lamport > latest.lamport) {
-            latest = {
-              timestamp: change.timestamp,
-              lamport: change.lamport,
-            };
-          }
-        }
-      }
-
-      if (latest && latest.timestamp > 0) {
-        return normalizeLoroChangeTimestampMs(latest.timestamp);
-      }
-    }
-
-    return this.getCreatedAt();
-  }
-
   private getGenesisCertificate():
     | ReturnType<typeof decodeGenesisCert>
     | undefined {

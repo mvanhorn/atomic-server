@@ -35,7 +35,6 @@ pub async fn populate_collections(store: &impl Storelike) -> crate::errors::Atom
     for subject in result.subjects {
         if subject.as_str() == urls::COMMIT {
             // Commits are signed envelopes, not a queryable class listing.
-            // See planning/commits-as-envelopes.md.
             continue;
         }
         let mut collection =

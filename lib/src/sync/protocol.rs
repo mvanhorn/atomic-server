@@ -187,11 +187,6 @@ pub mod sync_push_flags {
     /// This is the final chunk of a SYNC_PUSH run. Receivers loop reading
     /// SYNC_PUSH frames until they see one with this bit set.
     pub const LAST: u8 = 0b0001;
-    /// Trailing per-entry `lastCommit` ids follow the Loro bytes. Appended
-    /// after the entries so a decoder that does not know this flag still
-    /// reads the snapshots and ignores the trailer. See
-    /// `planning/commits-as-envelopes.md`.
-    pub const HAS_COMMIT_ID: u8 = 0b0010;
 }
 
 /// Chunking thresholds for `encode_sync_push_chunks`. A chunk closes when
@@ -322,34 +317,13 @@ pub fn encode_commit(request_id: u16, commit_json: &str) -> Vec<u8> {
 
 /// Encode a COMMIT_OK message.
 ///
-/// Format: `[0x14] [request_id: u16] [commit_id_utf8]`.
-/// `commit_id` is `did:ad:commit:{signature}` — the caller already holds the
-/// signed envelope it sent; the ack only needs the id to stamp `lastCommit`.
-/// Older servers sent the full JSON-AD commit resource here; see
-/// [`commit_id_from_ok_body`].
-pub fn encode_commit_ok(request_id: u16, commit_id: &str) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(3 + commit_id.len());
+/// Format: `[0x14] [request_id: u16] [server_commit_json_utf8]`.
+pub fn encode_commit_ok(request_id: u16, commit_json: &str) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(3 + commit_json.len());
     buf.push(tag::COMMIT_OK);
     buf.extend_from_slice(&request_id.to_be_bytes());
-    buf.extend_from_slice(commit_id.as_bytes());
+    buf.extend_from_slice(commit_json.as_bytes());
     buf
-}
-
-/// Best-effort commit id from a COMMIT_OK body. New servers send the id as
-/// UTF-8; older servers sent the full JSON-AD commit resource (`@id`).
-pub fn commit_id_from_ok_body(body: &str) -> String {
-    let trimmed = body.trim();
-    if trimmed.starts_with('{') {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            if let Some(id) = v.get("@id").and_then(|x| x.as_str()) {
-                return id.to_string();
-            }
-            if let Some(sig) = v.get(crate::urls::SIGNATURE).and_then(|x| x.as_str()) {
-                return format!("did:ad:commit:{sig}");
-            }
-        }
-    }
-    trimmed.to_string()
 }
 
 /// Encode an ERROR message.
@@ -418,55 +392,29 @@ pub fn encode_sync_diff(
 
 /// Encode a single SYNC_PUSH chunk:
 /// `[0x33] [drive_len: u16] [drive] [flags: u8] [count: u16]
-///  [subject_len: u16] [subject] [bytes_len: u32] [loro_bytes] ...
-///  [commit_id_len: u16] [commit_id] × count` when [`sync_push_flags::HAS_COMMIT_ID`].
-///
-/// Commit ids trail the entries so a decoder that does not know the flag
-/// still reads every snapshot and ignores the trailer.
+///  [subject_len: u16] [subject] [bytes_len: u32] [loro_bytes] ...`
 ///
 /// Set `last = true` to signal the final chunk of a run; receivers loop
 /// reading SYNC_PUSH until they see one with the LAST flag set. Use
 /// `encode_sync_push_chunks` for the common case where you have a flat
 /// `entries` list and want it split + flagged automatically.
 pub fn encode_sync_push(drive: &str, entries: &[(&str, &[u8])], last: bool) -> Vec<u8> {
-    let mapped: Vec<(&str, &[u8], Option<&str>)> =
-        entries.iter().map(|(s, b)| (*s, *b, None)).collect();
-    encode_sync_push_with_ids(drive, &mapped, last)
-}
-
-/// Like [`encode_sync_push`], with a per-entry `lastCommit` id.
-pub fn encode_sync_push_with_ids(
-    drive: &str,
-    entries: &[(&str, &[u8], Option<&str>)],
-    last: bool,
-) -> Vec<u8> {
     let drive_bytes = drive.as_bytes();
-    let total_entry_size: usize = entries
-        .iter()
-        .map(|(s, b, c)| 2 + s.len() + 4 + b.len() + 2 + c.map(|id| id.len()).unwrap_or(0))
-        .sum();
+    let total_entry_size: usize = entries.iter().map(|(s, b)| 2 + s.len() + 4 + b.len()).sum();
 
     let mut buf = Vec::with_capacity(1 + 2 + drive_bytes.len() + 1 + 2 + total_entry_size);
     buf.push(tag::SYNC_PUSH);
     buf.extend_from_slice(&(drive_bytes.len() as u16).to_be_bytes());
     buf.extend_from_slice(drive_bytes);
-    let mut flags = if last { sync_push_flags::LAST } else { 0 };
-    flags |= sync_push_flags::HAS_COMMIT_ID;
-    buf.push(flags);
+    buf.push(if last { sync_push_flags::LAST } else { 0 });
     buf.extend_from_slice(&(entries.len() as u16).to_be_bytes());
 
-    for (subject, loro_bytes, _) in entries {
+    for (subject, loro_bytes) in entries {
         let s = subject.as_bytes();
         buf.extend_from_slice(&(s.len() as u16).to_be_bytes());
         buf.extend_from_slice(s);
         buf.extend_from_slice(&(loro_bytes.len() as u32).to_be_bytes());
         buf.extend_from_slice(loro_bytes);
-    }
-
-    for (_, _, last_commit) in entries {
-        let id = last_commit.unwrap_or("");
-        buf.extend_from_slice(&(id.len() as u16).to_be_bytes());
-        buf.extend_from_slice(id.as_bytes());
     }
 
     buf
@@ -481,18 +429,8 @@ pub fn encode_sync_push_with_ids(
 /// — otherwise they'll terminate the read early or hang waiting for data
 /// that's not coming.
 pub fn encode_sync_push_chunks(drive: &str, entries: &[(&str, &[u8])]) -> Vec<Vec<u8>> {
-    let mapped: Vec<(&str, &[u8], Option<&str>)> =
-        entries.iter().map(|(s, b)| (*s, *b, None)).collect();
-    encode_sync_push_chunks_with_ids(drive, &mapped)
-}
-
-/// Split entries that carry a `lastCommit` id into SYNC_PUSH chunks.
-pub fn encode_sync_push_chunks_with_ids(
-    drive: &str,
-    entries: &[(&str, &[u8], Option<&str>)],
-) -> Vec<Vec<u8>> {
     if entries.is_empty() {
-        return vec![encode_sync_push_with_ids(drive, &[], true)];
+        return vec![encode_sync_push(drive, &[], true)];
     }
 
     let mut chunks: Vec<Vec<u8>> = Vec::new();
@@ -501,8 +439,8 @@ pub fn encode_sync_push_chunks_with_ids(
         let mut end = start;
         let mut bytes_acc: usize = 0;
         while end < entries.len() && end - start < SYNC_PUSH_MAX_ENTRIES {
-            let (s, b, c) = entries[end];
-            let entry_size = 2 + s.len() + 4 + b.len() + 2 + c.map(|id| id.len()).unwrap_or(0);
+            let (s, b) = entries[end];
+            let entry_size = 2 + s.len() + 4 + b.len();
             // Always include at least one entry per chunk, even if it alone
             // exceeds the byte budget — chunking past a single oversized
             // entry isn't possible without subdividing the loro_bytes.
@@ -513,7 +451,7 @@ pub fn encode_sync_push_chunks_with_ids(
             end += 1;
         }
         let last = end == entries.len();
-        chunks.push(encode_sync_push_with_ids(drive, &entries[start..end], last));
+        chunks.push(encode_sync_push(drive, &entries[start..end], last));
         start = end;
     }
     chunks
@@ -927,8 +865,6 @@ pub fn decode_sync_diff(data: &[u8]) -> Option<DecodedSyncDiff> {
 pub struct SyncPushEntry {
     pub subject: String,
     pub loro_bytes: Vec<u8>,
-    /// Latest applied envelope id, when the sender had one.
-    pub last_commit: Option<String>,
 }
 
 /// Decoded SYNC_PUSH message.
@@ -955,7 +891,6 @@ pub fn decode_sync_push(data: &[u8]) -> Option<DecodedSyncPush> {
     }
     let flag_bits = rest[0];
     let last = flag_bits & sync_push_flags::LAST != 0;
-    let has_commit_id = flag_bits & sync_push_flags::HAS_COMMIT_ID != 0;
     let count = u16::from_be_bytes([rest[1], rest[2]]) as usize;
     let mut pos = 3;
     let mut entries = Vec::with_capacity(count);
@@ -981,23 +916,7 @@ pub fn decode_sync_push(data: &[u8]) -> Option<DecodedSyncPush> {
         entries.push(SyncPushEntry {
             subject: subject.to_string(),
             loro_bytes,
-            last_commit: None,
         });
-    }
-
-    if has_commit_id {
-        for entry in entries.iter_mut() {
-            if pos + 2 > rest.len() {
-                break;
-            }
-            let id_len = u16::from_be_bytes([rest[pos], rest[pos + 1]]) as usize;
-            pos += 2;
-            let id = std::str::from_utf8(rest.get(pos..pos + id_len)?).ok()?;
-            pos += id_len;
-            if !id.is_empty() {
-                entry.last_commit = Some(id.to_string());
-            }
-        }
     }
 
     Some(DecodedSyncPush {
@@ -1126,17 +1045,12 @@ mod tests {
 
     #[test]
     fn commit_ok_round_trip() {
-        let id = "did:ad:commit:test";
-        let encoded = encode_commit_ok(43, id);
+        let json = r#"{"@id":"did:ad:commit:test"}"#;
+        let encoded = encode_commit_ok(43, json);
         assert_eq!(encoded[0], tag::COMMIT_OK);
         let decoded = decode_commit(&encoded[1..]).unwrap();
         assert_eq!(decoded.request_id, 43);
-        assert_eq!(decoded.commit_json, id);
-        assert_eq!(commit_id_from_ok_body(id), id);
-        assert_eq!(
-            commit_id_from_ok_body(r#"{"@id":"did:ad:commit:legacy"}"#),
-            "did:ad:commit:legacy"
-        );
+        assert_eq!(decoded.commit_json, json);
     }
 
     #[test]
@@ -1149,45 +1063,6 @@ mod tests {
         assert_eq!(decoded.drive, "did:ad:drive");
         assert_eq!(decoded.entries.len(), 2);
         assert!(decoded.last, "single-frame push must set LAST");
-        assert!(decoded.entries[0].last_commit.is_none());
-    }
-
-    #[test]
-    fn sync_push_last_commit_round_trip() {
-        let entries = [(
-            "did:ad:r1",
-            b"snapshot1".as_slice(),
-            Some("did:ad:commit:abc"),
-        )];
-        let encoded = encode_sync_push_with_ids("did:ad:drive", &entries, true);
-        let decoded = decode_sync_push(&encoded[1..]).unwrap();
-        assert_eq!(
-            decoded.entries[0].last_commit.as_deref(),
-            Some("did:ad:commit:abc")
-        );
-    }
-
-    #[test]
-    fn sync_push_without_commit_id_flag_still_decodes() {
-        // Hand-build a pre-HAS_COMMIT_ID frame so mixed-version peers still
-        // import snapshots.
-        let drive = b"did:ad:drive";
-        let subject = b"did:ad:r1";
-        let bytes = b"snap";
-        let mut buf = Vec::new();
-        buf.push(tag::SYNC_PUSH);
-        buf.extend_from_slice(&(drive.len() as u16).to_be_bytes());
-        buf.extend_from_slice(drive);
-        buf.push(sync_push_flags::LAST);
-        buf.extend_from_slice(&1u16.to_be_bytes());
-        buf.extend_from_slice(&(subject.len() as u16).to_be_bytes());
-        buf.extend_from_slice(subject);
-        buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-        buf.extend_from_slice(bytes);
-        let decoded = decode_sync_push(&buf[1..]).unwrap();
-        assert_eq!(decoded.entries.len(), 1);
-        assert!(decoded.entries[0].last_commit.is_none());
-        assert_eq!(decoded.entries[0].loro_bytes, bytes);
     }
 
     #[test]

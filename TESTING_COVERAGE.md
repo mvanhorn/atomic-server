@@ -318,13 +318,7 @@ Not covered: leftover Yjs-era DocumentV2 bodies end-to-end (needs a stored `{ ty
 | Flow | Layer | Where |
 |---|---|---|
 | `LoroDoc` values are not KV-index keys | protocol | `lib/src/values.rs::loro_doc_is_not_indexed` |
-| `lastCommit` is a propval overlay, not a Loro op | protocol | `lib/src/commit.rs::last_commit_is_propval_overlay_not_in_loro` |
-| `SYNC_PUSH` lastCommit trailer round-trips; old frames still decode | protocol | `lib/src/sync/protocol.rs`, `browser/lib/src/ws-v2.test.ts` |
-| `COMMIT_OK` body is a commit id; legacy JSON-AD still parses | protocol | `lib/src/sync/protocol.rs`, `browser/lib/src/commit.test.ts` |
-| Retention policy parse + `none` drops only non-critical commits | protocol | `lib/src/commit.rs::commit_retention_policy_parse_and_persist` |
-| `retention=none` keeps genesis/ACL/destroy, drops content, resource state survives | protocol | `lib/src/db/test.rs::commit_retention_none_keeps_auth_floor_drops_content` |
-
-Not covered: `recent` bounded cache; per-resource `retention` propval; signed envelopes on `SYNC_PUSH` (id-only shipped). See [`planning/commits-as-envelopes.md`](./planning/commits-as-envelopes.md).
+| Content commits are not stored; genesis/ACL/destroy are | protocol | `lib/src/db/test.rs::content_commits_are_not_stored` |
 
 ## Personal drive identity
 

@@ -3,7 +3,7 @@ import {
   useCanWrite,
   useChildren,
   useCreatedBy,
-  useUpdatedAt,
+  useCreatedAt,
 } from '@tomic/react';
 import { useCallback, type JSX } from 'react';
 import { styled } from 'styled-components';
@@ -21,7 +21,7 @@ import { useNewResourceUI } from '../../components/forms/NewForm/useNewResourceU
 
 export function ArticlePage({ resource }: ResourcePageProps): JSX.Element {
   const createdBy = useCreatedBy(resource);
-  const updatedAt = useUpdatedAt(resource);
+  const createdAt = useCreatedAt(resource);
 
   const canEdit = useCanWrite(resource);
   const { subjects: children } = useChildren(resource.subject);
@@ -41,7 +41,7 @@ export function ArticlePage({ resource }: ResourcePageProps): JSX.Element {
             <Column>
               <HeadingWrapper>
                 <EditableTitle resource={resource} withDecorations />
-                <CommitDetail createdAt={updatedAt} createdBy={createdBy} />
+                <CommitDetail createdAt={createdAt} createdBy={createdBy} />
               </HeadingWrapper>
               <ArticleDescription resource={resource} canEdit={canEdit} />
               <UploadForm parentResource={resource} />

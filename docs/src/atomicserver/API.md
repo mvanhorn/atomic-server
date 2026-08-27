@@ -24,7 +24,7 @@ curl -i -H "Accept: text/turtle" https://atomicdata.dev/properties/shortname
 ## Endpoints
 
 The various [Endpoints](../endpoints.md) in AtomicServer can be seen at `/endpoints` of your local instance.
-These include functionality to create changes using `/commit`, query data using `/query`, get `/versions`, or do full-text search queries using `/search`.
+These include functionality to create changes using `/commits`, query data using `/query`, get `/versions`, or do full-text search queries using `/search`.
 Typically, you pass query parameters to these endpoints to specify what you want to do.
 
 <!-- We have a subset of the [API documented using Swagger / OpenAPI](https://editor.swagger.io/?url=https://raw.githubusercontent.com/atomicdata-dev/atomic-server/master/server/openapi.yml). -->

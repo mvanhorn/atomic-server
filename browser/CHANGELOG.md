@@ -2,9 +2,8 @@
 
 This changelog covers all five packages, as they are (for now) updated as a whole
 
-- Commits as signed envelopes: `lastCommit` is no longer written into Loro;
-  `CommitDetail` does not fetch commit resources; `COMMIT_OK` is an id-only
-  ack; `SYNC_PUSH` carries `lastCommit` per entry.
+- Commits are signed envelopes: `CommitDetail` does not fetch `did:ad:commit:`
+  resources; author and dates come from the resource.
 - Fix: opening an adopted HTTP drive no longer moves the home server. A bare origin (`https://host`) is still a server switch; an HTTP subject with a path is a workspace and is fetched cross-origin, so a pre-DID drive on `atomicdata.dev` cannot take the session with it (websocket, DID auth, every later fetch).
 - Fix: opening a filled table no longer flashes rows (or sidebar children) in the wrong order. Local queries are unsorted; hydrating each member used to optimistic-add them in arrival order before the client-side sort landed. The sidebar also listed every table row until the resource's class arrived. OPFS cold-load could shuffle array properties the same way by merging a JSON-AD-seeded LoroList with the stored snapshot. Reloading a table after a cell edit no longer leaves the page stuck loading: an OPFS snapshot replace was importing the same bytes twice and could drop `isA`. Table totals now re-query after the edit is queued to OPFS, so a sum follows a cell change without a reload.
 

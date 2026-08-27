@@ -182,9 +182,6 @@ impl AppState {
         // no request can slip in under the default open policy.
         crate::host_mode::install_policy(&store, &config.host_mode).await;
 
-        store.set_commit_retention(config.opts.commit_retention);
-        tracing::info!("Commit retention: {}", config.opts.commit_retention);
-
         // Initialize search constructs
         let search_state = SearchState::new(&config)
             .map_err(|e| format!("Failed to start search service: {}", e))?;

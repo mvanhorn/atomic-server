@@ -58,61 +58,6 @@ pub struct CommitApplied {
     pub imported_new_ops: bool,
 }
 
-/// How long a node keeps signed commit *resources* after applying them.
-///
-/// The write is always verified. This only controls whether the certificate is
-/// stored as a queryable `did:ad:commit:…` row. See
-/// `planning/commit-retention-and-state-certificates.md`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CommitRetentionPolicy {
-    /// Keep every commit as an audit resource (today's behaviour).
-    #[default]
-    Full,
-    /// Keep a bounded window. Until that cache exists, treated as [`Self::Full`].
-    Recent,
-    /// Keep only genesis and authorization-critical commits (rights, parent,
-    /// destroy). Ordinary content commits are discarded after apply.
-    None,
-}
-
-impl CommitRetentionPolicy {
-    /// Whether this applied commit should be persisted as a resource.
-    ///
-    /// `none` still keeps the must-retain floor: genesis plus any commit that
-    /// mutates rights, parent, or destroy ([`crate::hierarchy::AuthImpact`]).
-    pub fn should_persist(self, auth_critical: bool) -> bool {
-        match self {
-            Self::Full | Self::Recent => true,
-            Self::None => auth_critical,
-        }
-    }
-}
-
-impl std::fmt::Display for CommitRetentionPolicy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Full => "full",
-            Self::Recent => "recent",
-            Self::None => "none",
-        })
-    }
-}
-
-impl std::str::FromStr for CommitRetentionPolicy {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "full" => Ok(Self::Full),
-            "recent" => Ok(Self::Recent),
-            "none" => Ok(Self::None),
-            other => Err(format!(
-                "unknown commit retention '{other}'; expected full, recent, or none"
-            )),
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 /// Describes options for applying a Commit.
 /// Skip the checks you don't need to get better performance, or if you want to break the rules a little.
@@ -1025,12 +970,15 @@ impl Commit {
 
         let commit_resource: Resource = commit.into_resource(store).await?;
 
-        // lastCommit is a non-CRDT projection of the envelope we just
-        // applied. Writing it into the Loro doc used to add a bookkeeping
-        // op on every save (see planning/commits-as-envelopes.md).
+        // Set the `lastCommit` to the newly created Commit
         applied
             .resource_new
-            .stamp_last_commit(commit_resource.get_subject().clone());
+            .set(
+                urls::LAST_COMMIT.to_string(),
+                Value::AtomicUrl(commit_resource.get_subject().clone()),
+                store,
+            )
+            .await?;
 
         let destroyed = commit.destroy.unwrap_or(false);
 
@@ -1332,10 +1280,7 @@ impl CommitBuilder {
     /// Creates the Commit and signs it using a signature.
     /// Does not send it - see [atomic_lib::client::post_commit].
     /// Private key is the base64 encoded pkcs8 for the signer.
-    /// `previousCommit` is optional audit metadata — callers that want a
-    /// chain (the TS client still sets it) put it on the builder. This
-    /// method does not derive one from `lastCommit`; Loro, not the commit
-    /// chain, is the causal authority.
+    /// Sets the `previousCommit` using the `lastCommit`.
     /// Returns true if this builder has any pending change that would
     /// produce a non-empty commit. Used by callers (`Resource::save`,
     /// `Resource::save_locally`) to skip a sign+apply round-trip when
@@ -1357,6 +1302,9 @@ impl CommitBuilder {
         store: &impl Storelike,
         resource: &Resource,
     ) -> AtomicResult<Commit> {
+        // previousCommit is optional audit metadata. Callers that want a
+        // chain put it on the builder; Loro is the causal authority.
+
         // If the resource has a live Loro doc but no snapshot was eagerly
         // exported to the commit builder, export it now (single export).
         // Skip when `set`/`remove` are pending — sign_at must merge those onto
@@ -1549,27 +1497,6 @@ mod test {
     use super::*;
     use crate::{agents::Agent, Store, Storelike};
 
-    #[test]
-    fn commit_retention_policy_parse_and_persist() {
-        assert_eq!(
-            "full".parse::<CommitRetentionPolicy>().unwrap(),
-            CommitRetentionPolicy::Full
-        );
-        assert_eq!(
-            "NONE".parse::<CommitRetentionPolicy>().unwrap(),
-            CommitRetentionPolicy::None
-        );
-        assert_eq!(
-            "recent".parse::<CommitRetentionPolicy>().unwrap(),
-            CommitRetentionPolicy::Recent
-        );
-        assert!("bogus".parse::<CommitRetentionPolicy>().is_err());
-        assert!(CommitRetentionPolicy::Full.should_persist(false));
-        assert!(CommitRetentionPolicy::Recent.should_persist(false));
-        assert!(!CommitRetentionPolicy::None.should_persist(false));
-        assert!(CommitRetentionPolicy::None.should_persist(true));
-    }
-
     #[tokio::test]
     async fn agent_and_commit() {
         let store = Store::init().await.unwrap();
@@ -1586,26 +1513,10 @@ mod test {
         let value2 = Value::new("someval", &DataType::Slug).unwrap();
         commitbuiler.set(property2.into(), value2);
         let commit = commitbuiler.sign(&agent, &store, &resource).await.unwrap();
-        let commit_subject = commit.get_subject().to_string();
         let _created_resource = store.apply_commit(commit, &OPTS).await.unwrap();
 
         let resource = store.get_resource(&subject.into()).await.unwrap();
         assert!(resource.get(property1).unwrap().to_string() == value1.to_string());
-        let found_commit = store
-            .get_resource(&commit_subject.as_str().into())
-            .await
-            .unwrap();
-        println!("Found commit subject: {}", found_commit.get_subject());
-        println!("Found commit props: {:?}", found_commit.get_propvals());
-
-        assert!(
-            found_commit
-                .get_shortname("description", &store)
-                .await
-                .unwrap()
-                .to_string()
-                == value1.to_string()
-        );
     }
 
     #[tokio::test]
@@ -2801,7 +2712,7 @@ mod test {
         let mut builder2 = CommitBuilder::new(subject.into());
         builder2.set_loro_update(client_doc.export_snapshot());
         // previousCommit is optional audit metadata; the TS client still
-        // sets it, but sign() no longer auto-fills a causal chain.
+        // sets it, but sign() does not auto-fill a causal chain.
         let commit2 = builder2.sign(&agent, &store, &after_first).await.unwrap();
         store.apply_commit(commit2, &OPTS).await.unwrap();
 
@@ -2810,58 +2721,6 @@ mod test {
             after_second.get(crate::urls::NAME).unwrap().to_string(),
             "Ne",
             "commit 2 should rename name to Ne — if this fails, sequential commits aren't merging properly"
-        );
-
-        let last = after_second
-            .get(crate::urls::LAST_COMMIT)
-            .expect("apply stamps lastCommit as a propval overlay");
-        assert!(
-            last.to_string().starts_with("did:ad:commit:"),
-            "lastCommit overlay should be a commit DID, got {last}"
-        );
-        let doc = after_second.build_state_doc().unwrap();
-        assert!(
-            !doc.get_all_properties()
-                .contains_key(crate::urls::LAST_COMMIT),
-            "lastCommit must not be a Loro property"
-        );
-    }
-
-    /// lastCommit is a propval overlay: apply stamps it, rematerialize
-    /// keeps it, and a fresh Loro seed does not write it as a CRDT op.
-    #[tokio::test]
-    async fn last_commit_is_propval_overlay_not_in_loro() {
-        let (store, agent) = store_with_known_agent().await;
-        let subject = "https://localhost/last_commit_overlay";
-
-        let client_doc = crate::loro::AtomicLoroDoc::new();
-        client_doc
-            .set_property(crate::urls::NAME, &Value::String("Overlay".into()))
-            .unwrap();
-        client_doc
-            .set_property(crate::urls::SHORTNAME, &Value::String("ov".into()))
-            .unwrap();
-        client_doc
-            .set_property(crate::urls::DESCRIPTION, &Value::String("d".into()))
-            .unwrap();
-
-        let empty = Resource::new(subject.into());
-        let mut builder = CommitBuilder::new(subject.into());
-        builder.set_loro_update(client_doc.export_snapshot());
-        let commit = builder.sign(&agent, &store, &empty).await.unwrap();
-        store.apply_commit(commit, &OPTS).await.unwrap();
-
-        let loaded = store.get_resource(&subject.into()).await.unwrap();
-        let last = loaded
-            .get(crate::urls::LAST_COMMIT)
-            .expect("get_resource must restore the lastCommit overlay after rematerialize");
-        assert!(last.to_string().starts_with("did:ad:commit:"));
-
-        let doc = loaded.build_state_doc().unwrap();
-        assert!(
-            !doc.get_all_properties()
-                .contains_key(crate::urls::LAST_COMMIT),
-            "seeding a state doc from propvals must skip lastCommit"
         );
     }
 

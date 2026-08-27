@@ -52,7 +52,7 @@ In practice, this means that users get a couple of nice features for free:
 
 It also means that, compared to Solid, there is a relatively simple and strict API for changing data.
 Atomic Data has a **uniform write API**.
-All writes are signed [Atomic Commits](../commits/intro.md) posted to the `/commit` endpoint of a Server.
+All changes to data are done by posting Commits to the `/commits` endpoint of a Server.
 This removes the need to think about differences between all sorts of HTTP methods like POST / PUT / PATCH, and how servers should reply to that.
 
 _EDIT: as of december 2021, Solid has introduced `.n3 patch` for standardizing state changes. Although this adds a uniform way of describing changes, it still lacks the power of Atomic Commits. It does not specify signatures, mention versioning, or deals with persisting changesets. On top of that, it is quite difficult to read or parse, being `.n3`._
@@ -130,7 +130,7 @@ I believe that as of today (february 2022), Atomic-Server has quite a few advant
 - **Lightweight** (8MB download, no runtime dependencies)
 - **HTTPS + HTTP2 support** with Built-in LetsEncrypt handshake.
 - **Browser GUI included** powered by [atomic-data-browser](https://github.com/atomicdata-dev/atomic-data-browser). Features dynamic forms, tables, authentication, theming and more. Easy to use!
-- **Versioning / history** from the Loro oplog, with writes authorized by [Atomic Commits](https://docs.atomicdata.dev/commits/intro.html)
+- **Event-sourced versioning** / history powered by [Atomic Commits](https://docs.atomicdata.dev/commits/intro.html)
 - **Many serialization options**: to JSON, [JSON-AD](https://docs.atomicdata.dev/core/serialization.html#json-ad), and various Linked Data / RDF formats (RDF/XML, N-Triples / Turtle / JSON-LD).
 - **Full-text search** with fuzzy search and various operators, often <3ms responses.
 - **Pagination, sorting and filtering** using [Atomic Collections](https://docs.atomicdata.dev/schema/collections.html)

@@ -1,15 +1,12 @@
 # Commits as State Certificates
 
-> **Status:** Active (direction decided 2026-08-27). Per-resource retention
-> added 2026-05-29. Reframes Atomic Commits around Loro as the resource
-> history engine. It does **not** propose removing signed writes — it
-> separates the *required trust boundary* (verify a signed write) from
-> *optional audit retention* (keep the commit afterwards). Retention is
-> resolved **per resource** (user-controlled, inherited down the parent
-> chain), capped by node policy — see "Per-resource retention" below.
->
-> Cleanup inventory and the speed/size answer live in
-> [`commits-as-envelopes.md`](./commits-as-envelopes.md).
+> **Status:** Proposal (2026-05; per-resource retention added 2026-05-29).
+> Reframes Atomic Commits around Loro as the resource history engine. It does
+> **not** propose removing signed writes — it separates the *required trust
+> boundary* (verify a signed write) from *optional audit retention* (keep the
+> commit afterwards). Retention is resolved **per resource** (user-controlled,
+> inherited down the parent chain), capped by node policy — see
+> "Per-resource retention" below.
 
 ## Thesis
 
@@ -502,14 +499,6 @@ history model):
 - [x] Find tests that assume commits are persisted; separate
       resource-history tests from audit-retention tests.
 
-**Landed since the 2026-05 audit** (do not redo — see
-[`commits-as-envelopes.md`](./commits-as-envelopes.md)):
-
-- Versioning plugin is oplog-based (`server/src/plugins/versioning.rs`).
-- `createdAt` / `createdBy` materialized from genesis cert / oplog.
-- Causality guard accepts idempotent replay (`imported_new_ops`).
-- Inline genesis cert shipped (identity without fetching a commit resource).
-
 **Findings (2026-05-23 audit).**
 
 *Code that depends on retained commit resources:*
@@ -559,29 +548,26 @@ history model):
 
 ### Phase 1 — correct idempotency (do this first; unblocks the outbox)
 
-- [x] Split `validate_loro_causality` into idempotent-replay vs. LWW-loss
-      (`imported_new_ops` in `commit.rs`).
+- [ ] Split `validate_loro_causality` into idempotent-replay vs. LWW-loss.
 - [ ] Accept idempotent replays as success end-to-end (server + outbox).
 - [ ] Tests: replaying an applied commit succeeds; a divergent write is still
       rejected.
 
 ### Phase 2 — retention policy behind the current format
 
-- [x] Add `CommitRetentionPolicy`; default `full` (current behaviour).
-- [x] Route storage through a persist gate (`should_persist` on apply).
-- [x] Add a test mode with retention disabled; ensure write/read/history
+- [ ] Add `CommitRetentionPolicy`; default `full` (current behaviour).
+- [ ] Route storage through `maybe_store_commit`.
+- [ ] Add a test mode with retention disabled; ensure write/read/sync/history
       all pass with it off (genesis commits still retained).
-      (`commit_retention_none_keeps_auth_floor_drops_content`)
 
 ### Phase 2.5 — intrinsic creation metadata (prerequisite for per-resource)
 
-- [x] Write `createdAt` (+ `createdBy` = genesis signer) as intrinsic propvals
-      at genesis, carried in the Loro doc (`materialize_genesis_metadata`).
-- [x] Chatroom / message views read these propvals (pass them into
-      `CommitDetail`). Generic "last edited" still fetches `did:ad:commit:`.
-- [ ] Independently shippable remainder: drop the `CommitDetail` fetch
-      fallback everywhere. Also see inline genesis certs in
-      [`genesis-self-verifying.md`](./genesis-self-verifying.md).
+- [ ] Write `createdAt` (+ `createdBy` = genesis signer) as intrinsic propvals
+      at genesis, carried in the Loro doc.
+- [ ] Migrate views that read creation/author from a fetched
+      `did:ad:commit:` resource to read these propvals instead.
+- [ ] Independently shippable; also fixes the current commit-fetch fragility
+      (chatroom `<CommitDetail>` vanishing on refresh).
 
 ### Phase 2.6 — per-resource retention resolution
 
@@ -595,10 +581,10 @@ history model):
 
 ### Phase 3 — Loro-based history
 
-- [x] Retire commit-replay in `server/src/plugins/versioning.rs` — endpoints
-      now read the Loro oplog.
-- [ ] Move remaining history UI off `did:ad:commit:` fetches (generic
-      `CommitDetail` still loads the commit resource).
+- [ ] Retire `server/src/plugins/versioning.rs` (the commit-replay
+      `/all-versions` and `/version` endpoints) in favour of
+      `loro.rs::get_history()`, which already derives versions from the oplog.
+- [ ] Move the history UI/API onto the Loro oplog.
 - [ ] Keep audit/feed UI explicitly backed by retained commits, surfacing when
       retention is unavailable; treat "history not retained" as a first-class
       state.
@@ -645,4 +631,3 @@ materialized state before commit retention can safely become optional.
 | [`sync.md`](./sync.md) | Current WS `COMMIT` implementation and echo suppression. |
 | [`atomic-lib-runtime.md`](./atomic-lib-runtime.md) | Future node boundary where retention becomes runtime policy. |
 | [`unified-data-layer.md`](./unified-data-layer.md) | Browser outbox must not assume retained commit resources. |
-| [`commits-as-envelopes.md`](./commits-as-envelopes.md) | Cleanup inventory and speed/size answer. |

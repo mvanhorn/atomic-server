@@ -316,8 +316,7 @@ impl WebSocketConnection {
                     .into_actor(self)
                     .map(|(rid, res), _actor, ctx| match res {
                         Ok(server_commit_json) => {
-                            let commit_id = ws_v2::commit_id_from_ok_body(&server_commit_json);
-                            ctx.binary(ws_v2::encode_commit_ok(rid, &commit_id));
+                            ctx.binary(ws_v2::encode_commit_ok(rid, &server_commit_json));
                         }
                         Err(e) => {
                             // F5 (planning/unified-sync.md): classify so the

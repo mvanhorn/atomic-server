@@ -7,7 +7,7 @@ resources. Current state lives in the Resource's [Loro CRDT](https://loro.dev)
 document. History and versioning read that document's oplog. A commit is the
 small signed receipt the transport is not allowed to omit.
 
-See [concepts](concepts.md) for the field list, [commits as envelopes](https://github.com/atomicdata-dev/atomic-server/blob/develop/planning/commits-as-envelopes.md) for why this model exists, and [commit retention](https://github.com/atomicdata-dev/atomic-server/blob/develop/planning/commit-retention-and-state-certificates.md) for what a node may discard after apply.
+See [concepts](concepts.md) for the field list.
 
 ## Design goals
 
@@ -24,17 +24,16 @@ See [concepts](concepts.md) for the field list, [commits as envelopes](https://g
 - Not the source of current state. Loro is.
 - Not a Git-style parent chain. `previousCommit` is optional audit metadata.
 - Not a product surface. The `/commits` class collection is not created. UI reads author and dates from the resource (genesis certificate and Loro oplog), not by fetching `did:ad:commit:…`.
-- Not required to stay on disk after apply, except the must-retain floor (genesis, rights / parent / destroy). See retention.
+- Not required to stay on disk after apply, except genesis and rights / parent / destroy.
 
 ## How a write lands
 
 1. The client edits the resource's Loro document.
 2. It exports a compact binary delta (`loroUpdate`).
 3. It signs a commit containing `subject`, `signer`, `createdAt`, `loroUpdate`, and a signature.
-4. The server verifies the signature and the signer's rights, imports the Loro bytes, materializes properties, and stamps `lastCommit` as a **non-CRDT overlay** on the resource row (not as a Loro op).
-5. Subscribers get an `UPDATE` with the new Loro bytes and the commit id. Catch-up `SYNC_PUSH` carries the same id next to the snapshot.
+4. The server verifies the signature and the signer's rights, imports the Loro bytes, and materializes properties. Ordinary content commits are not stored as resources; genesis and rights/parent/destroy are.
 
-HTTP `POST /commit` remains the fallback. The WebSocket `COMMIT` frame is the live path. Unsigned `SYNC_PUSH` still exists for replica catch-up; it now carries `lastCommit` so the recipient can stamp the overlay. Signed envelopes on that path (Layer 2 provenance) are the next tightening.
+HTTP `POST /commit` remains the fallback. The WebSocket `COMMIT` frame is the live path.
 
 ## Motivation
 

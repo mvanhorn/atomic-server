@@ -360,10 +360,6 @@ impl Value {
             // TODO: This results in wrong indexing, as some subjects will be numbers.
             Value::ResourceArray(_v) => self.to_subjects(None).unwrap_or_else(|_| vec![]),
             Value::AtomicUrl(v) => vec![v.to_string()],
-            // Nested resources and Loro binary payloads are not query keys.
-            // Indexing `LoroDoc` used to base64 the whole snapshot into both KV
-            // indexes on every retained commit — O(edits × resource size).
-            // See planning/commits-as-envelopes.md.
             Value::NestedResource(_) | Value::LoroDoc(_) => return None,
             // This might result in unnecessarily long strings, sometimes. We may want to shorten them later.
             val => vec![val.to_string()],

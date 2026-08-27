@@ -61,13 +61,12 @@ impl Resource {
         self.subject = new.subject.clone();
         self.propvals = new.propvals.clone();
         // Bring the in-memory doc onto the SAME causal lineage as the
-        // server's post-commit doc. Historically the apply path wrote
-        // `lastCommit` into Loro under a fresh peer id; if we kept our
+        // server's post-commit doc. The server's apply path writes its own
+        // ops (e.g. `lastCommit`) under a fresh peer id; if we kept our
         // pre-commit branch, the next edit would be causally *concurrent*
         // with the server's state and every later commit would re-merge two
         // divergent branches as LWW — silently dropping writes at random
-        // (peer-id tiebreak). `lastCommit` is now a propval overlay, but
-        // other server-side materialization can still add ops.
+        // (peer-id tiebreak).
         //
         // Import the server's doc rather than replacing the instance: the
         // shared client ops already match (same op identities), so only the
@@ -93,7 +92,7 @@ impl Resource {
         propvals: &PropVals,
     ) -> AtomicResult<()> {
         for (prop, val) in propvals {
-            if prop == urls::LORO_UPDATE || urls::is_derived_overlay_property(prop) {
+            if prop == urls::LORO_UPDATE {
                 continue;
             }
 
@@ -279,7 +278,6 @@ impl Resource {
     ) -> AtomicResult<()> {
         let mut propvals = Self::materialize_propvals_from_loro_doc(&doc);
         propvals.insert(urls::LORO_UPDATE.into(), Value::LoroDoc(snapshot));
-        self.restore_overlay_propvals(&mut propvals);
         self.propvals = propvals;
         self.loro = Some(doc);
         Ok(())
@@ -452,37 +450,17 @@ impl Resource {
     /// Rebuild propvals from the live Loro doc state.
     /// Does NOT export a snapshot — that happens once at save time.
     fn sync_propvals_from_loro(&mut self) {
-        let mut propvals = Self::materialize_propvals_from_loro_doc(self.loro());
-        self.restore_overlay_propvals(&mut propvals);
-        self.propvals = propvals;
-    }
-
-    /// Copy derived overlay fields (today: [`urls::LAST_COMMIT`]) from the
-    /// current propvals into `next` when the Loro projection does not carry
-    /// them. Used after rematerialize so a non-CRDT lastCommit pointer
-    /// survives `apply_state_doc` / undo.
-    fn restore_overlay_propvals(&self, next: &mut PropVals) {
-        if !next.contains_key(urls::LAST_COMMIT) {
-            if let Some(v) = self.propvals.get(urls::LAST_COMMIT) {
-                next.insert(urls::LAST_COMMIT.into(), v.clone());
-            }
-        }
-    }
-
-    /// Stamp [`urls::LAST_COMMIT`] as a propval overlay. Does not write the
-    /// Loro document or the legacy commit builder.
-    pub fn stamp_last_commit(&mut self, commit_subject: Subject) {
-        self.insert_propval_raw(urls::LAST_COMMIT.into(), Value::AtomicUrl(commit_subject));
+        self.propvals = Self::materialize_propvals_from_loro_doc(self.loro());
     }
 
     /// Insert a propval directly, bypassing the Loro doc entirely.
     ///
-    /// Used for response-shaping (`loroUpdate` snapshot bytes, `incomplete`
-    /// on a listing member) and for derived overlay fields such as
-    /// [`urls::LAST_COMMIT`] that must persist on the resource row but must
-    /// not become CRDT ops. Going through `set`/`set_unsafe` would call
-    /// `ensure_materialized`, which decodes the CRDT snapshot — the exact
-    /// cost the shallow query path exists to avoid.
+    /// For response-shaping only: attaching already-exported raw snapshot
+    /// bytes as `loroUpdate`, or marking `incomplete` on a listing member.
+    /// Going through `set`/`set_unsafe` would call `ensure_materialized`,
+    /// which decodes the CRDT snapshot — the exact cost the shallow query
+    /// path exists to avoid. Never use this for state that must be merged
+    /// or persisted; the doc will not know about it.
     pub(crate) fn insert_propval_raw(&mut self, property: String, value: Value) {
         self.propvals.insert(property, value);
     }
@@ -1417,11 +1395,6 @@ impl Resource {
         } else {
             self.is_native()
         };
-
-        if urls::is_derived_overlay_property(&property) {
-            self.propvals.insert(property, value);
-            return Ok(self);
-        }
 
         if !is_native {
             self.ensure_materialized()?;

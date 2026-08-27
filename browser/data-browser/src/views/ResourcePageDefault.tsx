@@ -1,6 +1,6 @@
 import {
   useCreatedBy,
-  useUpdatedAt,
+  useCreatedAt,
   useCanWrite,
   dataBrowser,
   core,
@@ -61,7 +61,7 @@ export function ResourcePageDefault({
   resource,
 }: ResourcePageProps): JSX.Element {
   const createdBy = useCreatedBy(resource);
-  const updatedAt = useUpdatedAt(resource);
+  const createdAt = useCreatedAt(resource);
   const canEdit = useCanWrite(resource);
   const navigate = useNavigateWithTransition();
 
@@ -83,7 +83,7 @@ export function ResourcePageDefault({
           </Row>
           <CompactDetails>
             <ClassDetail resource={resource} />
-            <CommitDetail createdAt={updatedAt} createdBy={createdBy} short />
+            <CommitDetail createdAt={createdAt} createdBy={createdBy} short />
           </CompactDetails>
           <ValueForm
             resource={resource}
