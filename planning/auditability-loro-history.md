@@ -104,6 +104,39 @@ A node that deletes blobs still has working documents and Loro
 history; History rows become unattributed instead of 404ing a commit
 resource.
 
+## Storage and sync
+
+**Where.** A new KV tree on the same `Db` as the document, next to
+`Tree::LoroSnapshots` — not `Tree::Resources`, not `Tree::Blobs` (those
+are file bytes keyed by BLAKE3). Key = `did:ad:commit:{sig}`. Value =
+the signed JSON-AD POST body. Server: redb. Browser: the same tree in
+the per-agent OPFS database, so a local write is verifiable on History
+before any network.
+
+They are not graph resources. They do not appear in `/commits`, search,
+or collections.
+
+**Would they sync?** Two different paths:
+
+| Path | Today | With envelope blobs |
+| --- | --- | --- |
+| Live write (`COMMIT` / `POST /commit`) | Envelope is the payload. Receiver applies and **drops** content envelopes. | Same payload. Receiver **keeps** the blob at apply. Proof rides the write; no extra protocol. |
+| Bulk catch-up (`SYNC_PUSH`) | Loro snapshots only. No envelopes. A newly paired device gets *what*, not signed *who*. | Snapshots still converge the document. Envelopes must be sent too, or History on that device is **Unattributed**. |
+
+So: they sync on the live path by not throwing the COMMIT body away. They
+do **not** sync on pairing/catch-up unless Layer 2 carries them (trailer
+on `SYNC_PUSH`, or a follow-up fetch of missing `lastCommit` ids). That
+is the same gap [`authorization-sync.md`](./authorization-sync.md) already
+calls Layer 2 unsigned.
+
+Critical commits already kept in `Tree::Resources` have the same hole:
+drive snapshot sync does not walk `did:ad:commit:…` subjects. Proof has
+always travelled as the write, not as a class listing.
+
+Cost: each blob repeats `loroUpdate` already in the snapshot. That
+duplication *is* the proof. Pruning blobs shrinks disk; History becomes
+unattributed; the document still loads.
+
 ## History row (target UI)
 
 Replace `Edited {loroTime} by peer {hex}…` with:
