@@ -169,23 +169,6 @@ async fn destroy_resource_and_check_collection() {
         agents_collection_count_3, 1,
         "The collection count did not decrease after destroying the resource."
     );
-
-    let commits_collection_3 = store
-        .get_resource_extended(&commits_url.as_str().into(), false, for_agent)
-        .await
-        .unwrap();
-    let commits_collection_count_3 = commits_collection_3
-        .to_single()
-        .get(crate::urls::COLLECTION_MEMBER_COUNT)
-        .unwrap()
-        .to_int()
-        .unwrap();
-    println!("Commits collection count 3: {}", commits_collection_count_3);
-    assert_eq!(
-        commits_collection_count_3,
-        commits_collection_count_2 + 1,
-        "The commits collection did not increase after destroying the resource."
-    );
 }
 
 /// Regression test for stale parent-index entries leaking into `count`.
@@ -360,26 +343,32 @@ async fn get_extended_resource_pagination() {
         .await
         .unwrap();
     crate::test_utils::setup_test_env(&store).await.unwrap();
-    let subject = format!(
-        "{}/classes?current_page=2&page_size=99999",
-        "http://localhost"
-    );
+
+    // Need enough local members that page 2 exists at page_size=1. This used to
+    // paginate `/commits` (every write minted a member). The `/commits`
+    // collection is no longer created; `/agents` has `include_external` and
+    // DID subjects, so extra agents show up. `/classes` does not: class
+    // subjects are `https://atomicdata.dev/…` and `include_external` is false.
+    for _ in 0..5 {
+        let mut agent = crate::agents::Agent::new(None)
+            .unwrap()
+            .to_resource()
+            .unwrap();
+        agent.save_locally(&store).await.unwrap();
+    }
+
     let for_agent = &ForAgent::Public;
+    let too_big = "http://localhost/agents?current_page=2&page_size=99999";
     if store
-        .get_resource_extended(&subject.as_str().into(), false, for_agent)
+        .get_resource_extended(&too_big.into(), false, for_agent)
         .await
         .is_ok()
     {
         panic!("Page 2 should not exist, because page size is set to a high value.")
     }
-    // let subject = "https://atomicdata.dev/classes?current_page=2&page_size=1";
-    let subject_with_page_size = format!("{}&page_size=1", subject);
+    let paged = "http://localhost/agents?current_page=2&page_size=1";
     let resource = store
-        .get_resource_extended(
-            &subject_with_page_size.as_str().into(),
-            false,
-            &ForAgent::Public,
-        )
+        .get_resource_extended(&paged.into(), false, &ForAgent::Public)
         .await
         .unwrap()
         .to_single();
@@ -389,7 +378,7 @@ async fn get_extended_resource_pagination() {
         .to_int()
         .unwrap();
     assert_eq!(cur_page, 2);
-    assert_eq!(resource.get_subject().as_str(), &subject_with_page_size);
+    assert_eq!(resource.get_subject().as_str(), paged);
 }
 
 /// Generate a bunch of resources, query them.
