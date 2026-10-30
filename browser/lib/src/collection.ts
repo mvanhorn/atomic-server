@@ -2,11 +2,15 @@ import { isNumber } from './datatypes.js';
 import { enableLoro } from './loro-loader.js';
 import { Collections, collections } from './ontologies/collections.js';
 import { Resource, normalizeLoroChangeTimestampMs } from './resource.js';
-import { Store } from './store.js';
+import { decodeB64 } from './base64.js';
+import { decodeGenesisCert } from './genesis.js';
+import { GENESIS, properties } from './urls.js';
+import type { Store } from './store.js';
 import { commits } from './ontologies/commits.js';
 import { dataBrowser } from './ontologies/dataBrowser.js';
 import { isCommitSubject } from './commit.js';
 import { core } from './ontologies/core.js';
+import { withDeadline } from './withDeadline.js';
 
 /**
  * Strips `did:ad:commit:` subjects from a member list. Commit resources don't
@@ -104,7 +108,14 @@ function constraintMatches(
   value: string,
   operator: FilterOperator = 'eq',
 ): boolean {
-  const propVal = resource.get(property);
+  // The server materializes `createdBy` for its index, but a client resource
+  // carries the creator in its genesis certificate and has no such property.
+  // Reading only the property made every member of a `createdBy` query read as
+  // no longer matching the moment its resource was loaded, and the live update
+  // stripped it from the list the server had just answered.
+  const propVal =
+    resource.get(property) ??
+    (property === properties.createdBy ? resource.getCreatedBy() : undefined);
 
   if (Array.isArray(propVal)) {
     return propVal.some(v => valueMatches(`${v}`, value, operator));
@@ -151,6 +162,11 @@ export interface QueryFilter {
    * count and any aggregates describe the filtered set.
    */
   expression_filters?: ExpressionFilter[];
+  /**
+   * Also list members that sit in the Trash. Hidden by default, matching the
+   * server. Sent to the server as `include_trashed=true` and to the local DB.
+   */
+  include_trashed?: boolean;
 }
 
 /** One constraint on a computed value: "logged more than an hour". */
@@ -163,6 +179,9 @@ export interface ExpressionFilter {
   /** The instant to measure "now" against, for expressions that do. Send the
    *  same one for every filter in a query. */
   now_ms?: number;
+  /** Minutes east of UTC the caller's days are in (`-new Date().getTimezoneOffset()`),
+   *  so a DATE and "today" mean the caller's. */
+  tz_offset_minutes?: number;
 }
 
 /** One statistic to compute. `count` needs no property. */
@@ -179,29 +198,23 @@ export interface Aggregate {
 
 export type AggregateFunction = 'sum' | 'count' | 'avg' | 'min' | 'max';
 
-/** A property to read off the resource, or a fixed number. */
-export type Operand = string | number;
-
 /**
  * A value computed from a resource rather than stored on it: a duration, an
  * amount, a days-since, a next-due date. Evaluated by the store, so a total or a
  * filter can name one wherever it can name a property.
  *
- * A fixed set of five, not a formula language — the same five the data-browser's
- * computed columns offer, in the same argument names.
+ * A formula (parsed by the store's `evalexpr`) plus the property each identifier
+ * in it reads: `{ formula: 'coalesce(until, now()) - start', vars: { start,
+ * until } }`. Dates are milliseconds; a missing value makes the row's value
+ * empty. Functions: `now()`, `coalesce(a, b, ..)`, `days(ms)`, `addDays(ms, n)`,
+ * `daysUntilAnniversary(ms)`, and evalexpr's builtins.
  */
-export type Expression =
-  /** `to − from`, in milliseconds. */
-  | { kind: 'difference'; from: Operand; to: Operand }
-  /** `(until ?? now) − from`, in milliseconds: still running while `until` is
-   *  empty. */
-  | { kind: 'elapsed'; from: Operand; until?: Operand | null }
-  /** Whole days between `from` and now. */
-  | { kind: 'daysSince'; from: Operand }
-  /** `a × b` — quantity × price, hours × rate. */
-  | { kind: 'product'; a: Operand; b: Operand }
-  /** `from + days`, as an instant. */
-  | { kind: 'offset'; from: Operand; days: Operand };
+export interface Expression {
+  kind: 'formula';
+  formula: string;
+  /** Identifier used in the formula → property subject. */
+  vars: Record<string, string>;
+}
 
 /** Break the statistics down per distinct value of a property. */
 export interface AggregateGrouping {
@@ -223,6 +236,8 @@ export interface Aggregation {
    *  duration, a days-since) is evaluated at. Send `Date.now()` so the number
    *  agrees with the cells the client computed itself. */
   now_ms?: number;
+  /** Minutes east of UTC the caller's days are in, as on `ExpressionFilter`. */
+  tz_offset_minutes?: number;
 }
 
 /** One bucket of a breakdown. */
@@ -325,10 +340,6 @@ export class Collection {
    */
   private _assemblingPage = false;
   private static legacyQueryServers = new WeakMap<Store, Set<string>>();
-  /** Pages of unsynced drives the server has answered this session. Its
-   * members were written to the local DB as they loaded and live updates keep
-   * it current, so the local answer is whole from then on. */
-  private static completedByServer = new WeakMap<Store, Set<string>>();
   private legacyQuery = false;
   private readonly preferServer: boolean;
   private legacyMembers?: Promise<string[]>;
@@ -370,6 +381,10 @@ export class Collection {
 
   public get value(): string | undefined {
     return this.params.value;
+  }
+
+  public get drive(): string | undefined {
+    return this.params.drive;
   }
 
   public get filters(): PropVal[] {
@@ -584,6 +599,12 @@ export class Collection {
    * user reloads. */
   private _refreshPending = false;
 
+  /** The first page and the count as they stood when the current `refresh()`
+   * cleared them. A change that arrives before the fetch lands is placed on
+   * top of these, so the collection never reads as only the changed row. */
+  private _staleMembers: string[] = [];
+  private _staleTotal = 0;
+
   public async refresh(): Promise<void> {
     if (this._refreshInFlight) {
       this._refreshPending = true;
@@ -594,6 +615,9 @@ export class Collection {
     this._refreshInFlight = (async () => {
       while (true) {
         this._refreshPending = false;
+        this._staleMembers =
+          this.pages.get(0)?.getSubjects(collections.properties.members) ?? [];
+        this._staleTotal = this._totalMembers;
         this.clearPages();
         this._waitForReady = this.fetchPage(0);
         await this._waitForReady;
@@ -742,10 +766,22 @@ export class Collection {
       // against the server.
       if (!this.pages.has(0)) {
         this._optimisticAdds.add(subject);
+
+        // During a refresh the member index is empty, so every existing member
+        // that changes here looks new. Standing in for the whole collection,
+        // that one row made it read as a single member until the fetch landed,
+        // and a table remapped its rows onto it: typing into a row inserted
+        // moments before ended up in the rows below. Keep what was there.
+        const before = this._refreshInFlight ? this._staleMembers : [];
+        const isNew = !before.includes(subject);
+        const members = isNew ? [...before, subject] : before;
+        const total = this._refreshInFlight
+          ? this._staleTotal + (isNew ? 1 : 0)
+          : 1;
         const page = new Resource<Collections.Collection>(this.buildSubject(0));
-        this.writePageMembers(page, [subject], 1);
+        this.writePageMembers(page, members, total);
         this.setPage(0, page);
-        this._totalMembers = 1;
+        this._totalMembers = total;
 
         return 'member-added';
       }
@@ -877,7 +913,8 @@ export class Collection {
       if (
         key === 'filters' ||
         key === 'aggregation' ||
-        key === 'expression_filters'
+        key === 'expression_filters' ||
+        key === 'include_trashed'
       ) {
         continue;
       }
@@ -907,6 +944,10 @@ export class Collection {
         'expression_filters',
         JSON.stringify(this.params.expression_filters),
       );
+    }
+
+    if (this.params.include_trashed) {
+      url.searchParams.set('include_trashed', 'true');
     }
 
     url.searchParams.set('current_page', `${page}`);
@@ -985,9 +1026,7 @@ export class Collection {
         !this.store.hasCompletedDriveSyncFor(
           this.params.drive ?? this.store.getDrive(),
         ) &&
-        !Collection.completedByServer
-          .get(this.store)
-          ?.has(this.buildSubject(page))
+        !this.store.collectionPagesAnsweredByServer.has(this.buildSubject(page))
       ) {
         await this.completeFromServer(page);
       }
@@ -1010,6 +1049,7 @@ export class Collection {
 
     if (this.store.serverConnected) {
       await this.fetchPageFromServer(page).catch(() => undefined);
+      this.retryAfterDriveSync();
 
       return;
     }
@@ -1028,6 +1068,7 @@ export class Collection {
 
     if (this.store.serverConnected) {
       await this.fetchPageFromServer(page).catch(() => undefined);
+      this.retryAfterDriveSync();
     }
   }
 
@@ -1071,20 +1112,27 @@ export class Collection {
 
     const sortDesc = !!this.params.sort_desc;
     const key = this.sortKeyOf(subject, sortBy);
-    const keys = members.map(member => this.sortKeyOf(member, sortBy));
 
     // A member the store does not hold yet has no key to compare against.
-    if (key === undefined || keys.some(k => k === undefined)) {
-      return [...members, subject];
-    }
+    if (key === undefined) return [...members, subject];
 
+    // Walk back from the end only as far as the new member sorts before the
+    // one it is compared with. A late arrival usually belongs at the end, so
+    // this reads one key, not the whole list: reading every key per added
+    // member made loading a large collection quadratic.
     let at = members.length;
 
-    while (
-      at > 0 &&
-      compareSortKeys(keys[at - 1], key, members[at - 1]!, subject, sortDesc) >
-        0
-    ) {
+    while (at > 0) {
+      const prev = this.sortKeyOf(members[at - 1]!, sortBy);
+
+      if (prev === undefined) return [...members, subject];
+
+      if (
+        compareSortKeys(prev, key, members[at - 1]!, subject, sortDesc) <= 0
+      ) {
+        break;
+      }
+
       at -= 1;
     }
 
@@ -1106,10 +1154,7 @@ export class Collection {
       return;
     }
 
-    const answered =
-      Collection.completedByServer.get(this.store) ?? new Set<string>();
-    answered.add(this.buildSubject(page));
-    Collection.completedByServer.set(this.store, answered);
+    this.store.collectionPagesAnsweredByServer.add(this.buildSubject(page));
 
     const fetched = this.pages.get(page);
 
@@ -1208,7 +1253,25 @@ export class Collection {
       return 'no-db';
     }
 
-    const result = await this.store.queryLocalDb({
+    // While a drive sync is still pulling data, the local database may hold
+    // only part of the members (a chat of thousands of messages, say). The
+    // server has them all, so let it answer instead of a partial list, and do
+    // not queue a query behind the sync's writes first.
+    if (
+      this.store.serverConnected &&
+      this.store.isDriveSyncPulling() &&
+      !this.store.hasCompletedDriveSyncFor(drive)
+    ) {
+      return 'no-db';
+    }
+
+    // Whether this drive's sync had finished when the question was asked, not
+    // when the answer came back. A query posted while the sync was still
+    // landing can be answered after it finished, and its empty result predates
+    // the rows the sync wrote: believing that one hid the whole table.
+    const syncedWhenAsked = this.store.hasCompletedDriveSyncFor(drive);
+
+    const query = this.store.queryLocalDb({
       property: this.params.property,
       value: this.params.value,
       filters: this.params.filters,
@@ -1226,7 +1289,20 @@ export class Collection {
       aggregation: this.params.aggregation?.aggregates.length
         ? this.params.aggregation
         : undefined,
+      includeTrashed: this.params.include_trashed ? true : undefined,
     });
+
+    // With a server to ask, a local query that has not answered by the read
+    // deadline (a worker busy with a drive sync's writes) is no answer. A
+    // local-only parent has no server to ask, so it waits as long as it takes.
+    const result =
+      this.store.serverConnected &&
+      !(
+        typeof this.params.value === 'string' &&
+        this.store.isLocalOnlySubject(this.params.value)
+      )
+        ? await withDeadline(query, this.store.localReadDeadlineMs(), null)
+        : await query;
 
     // Worker returned no result (query error / DB not available). Don't
     // overwrite the page — `fetchPage` races us against `/query`, and a
@@ -1236,9 +1312,7 @@ export class Collection {
       return 'no-db';
     }
 
-    // While a drive sync is still pulling data, the local database may hold
-    // only part of the members (a chat of thousands of messages, say). The
-    // server has them all, so let it answer instead of a partial list.
+    // The sync may have started pulling while the query ran.
     if (
       this.store.serverConnected &&
       this.store.isDriveSyncPulling() &&
@@ -1253,7 +1327,7 @@ export class Collection {
     this._assemblingPage = true;
 
     try {
-      return this.finishLocalDbPage(page, result, drive);
+      return this.finishLocalDbPage(page, result, drive, syncedWhenAsked);
     } finally {
       this._assemblingPage = false;
     }
@@ -1270,6 +1344,7 @@ export class Collection {
       aggregates?: AggregateOutcome[];
     },
     drive: string | undefined,
+    syncedWhenAsked: boolean,
   ): 'ok' | 'no-db' {
     if (result.count === 0) {
       this._queriedMembers.clear();
@@ -1283,7 +1358,7 @@ export class Collection {
       // Per-drive on purpose. Asking whether *any* sync had finished meant a
       // synced personal drive vouched for every other drive too, so browsing
       // a drive that was never synced locally showed nothing at all.
-      if (this.store.hasCompletedDriveSyncFor(drive)) {
+      if (syncedWhenAsked) {
         // `fetchPage` races us against `/query`. If the server already
         // populated the page with non-empty data, leave it — server is
         // authoritative for the instant of the query.
@@ -1459,6 +1534,7 @@ export class Collection {
       page,
       { subjects, count: subjects.length },
       this.params.drive,
+      this.store.hasCompletedDriveSyncFor(this.params.drive),
     );
   }
 
@@ -1545,6 +1621,43 @@ export class Collection {
     }
 
     return subjects;
+  }
+
+  /** Set while a query that neither the local database nor the server could
+   *  answer waits for its drive's sync to finish. */
+  private _syncRetry: (() => void) | undefined;
+  private _syncRetried = false;
+
+  /**
+   * The local database did not answer yet and the server did not either. That
+   * is no answer, and nothing asks again by itself: the table stays empty until
+   * a reload. The sync that is still filling the local database is what makes
+   * the next local answer believable, so ask once it has finished.
+   */
+  private retryAfterDriveSync(): void {
+    if (this.pages.has(0) || this._syncRetry) return;
+
+    const drive = this.params.drive ?? this.store.getDrive();
+
+    if (!drive) return;
+
+    const retry = () => {
+      this._syncRetry = undefined;
+      this.refresh().catch(() => undefined);
+    };
+
+    if (this.store.hasCompletedDriveSyncFor(drive)) {
+      // Finished while this query was running, so the next local answer counts.
+      // Once only: a client without a usable local database must not loop.
+      if (this._syncRetried) return;
+
+      this._syncRetried = true;
+      retry();
+
+      return;
+    }
+
+    this._syncRetry = this.store.onceDriveSynced(drive, retry);
   }
 
   private async fetchPageFromServer(page: number): Promise<void> {
@@ -1696,6 +1809,30 @@ const LAZY_HYDRATE_THRESHOLD = 200;
  * creation time, from the genesis change) is not in the JSON, so the caller
  * builds the resources instead and gets the same order as before.
  */
+/** Creation time (ms) of a JSON-AD member, as `Resource.getCreatedAt` reads it:
+ *  the genesis certificate first, then the materialized `createdAt`. */
+function createdAtFromJson(
+  parsed: Record<string, unknown>,
+): number | undefined {
+  const encoded = parsed[GENESIS];
+
+  if (typeof encoded === 'string' && encoded.length > 0) {
+    try {
+      const cert = decodeGenesisCert(decodeB64(encoded));
+
+      if (cert.createdAt > 0) return cert.createdAt;
+    } catch {
+      // Fall through to the propval.
+    }
+  }
+
+  const fromPropval = parsed[commits.properties.createdAt];
+
+  return typeof fromPropval === 'number'
+    ? normalizeLoroChangeTimestampMs(fromPropval)
+    : undefined;
+}
+
 function sortKeysFromJsonAd(
   sortBy: string,
   jsonBySubject: Map<string, string>,
@@ -1709,7 +1846,17 @@ function sortKeysFromJsonAd(
     let value: unknown;
 
     try {
-      value = (JSON.parse(json) as Record<string, unknown>)[sortBy];
+      const parsed = JSON.parse(json) as Record<string, unknown>;
+
+      value = parsed[sortBy];
+
+      // Rows nobody has repositioned have no `sortOrder`: they sort by
+      // creation time, which `Resource.getCreatedAt` reads from the genesis
+      // certificate. Read it from the JSON too, or every page of such a table
+      // (most of them) builds all its rows into resources just to sort.
+      if (value === undefined && derived) {
+        value = createdAtFromJson(parsed);
+      }
     } catch {
       return undefined;
     }

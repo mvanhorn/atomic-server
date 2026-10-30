@@ -21,8 +21,10 @@ use crate::{
     sync::protocol,
 };
 use futures::{SinkExt, StreamExt};
-use tokio::sync::{broadcast, mpsc};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio::sync::{broadcast, mpsc, watch};
+#[cfg(not(target_os = "android"))]
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 
 /// A message received from the server over WebSocket.
 #[derive(Clone, Debug)]
@@ -64,6 +66,9 @@ pub enum WsMessage {
         request_id: u16,
         commit_id: String,
         commit_json: Option<String>,
+        /// The node's write-load hint (`commit-pace`): the least number of
+        /// milliseconds to leave between commits of one resource.
+        pace_ms: Option<u32>,
     },
     /// The server's `CHALLENGE` (0x42): the nonce this connection's AUTH
     /// proof binds itself to. Recorded by the client; `authenticate` uses it
@@ -145,6 +150,8 @@ pub struct WsClient {
     /// The nonce from the server's `CHALLENGE`, once it arrived. `None` on a
     /// server that predates the frame.
     challenge: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// Flips to `true` when the reader task ends, i.e. the socket closed.
+    closed: watch::Receiver<bool>,
 }
 
 /// How long `authenticate` waits for the server's `CHALLENGE` when it has
@@ -176,9 +183,29 @@ impl WsClient {
     /// Connect to an AtomicServer WebSocket endpoint.
     /// The URL should be `ws://` or `wss://` (e.g. `ws://localhost:9883/ws`).
     pub async fn connect(url: &str) -> AtomicResult<Self> {
-        let (ws_stream, _response) = connect_async(url)
-            .await
-            .map_err(|e| format!("WebSocket connection failed to {}: {}", url, e))?;
+        super::install_default_crypto_provider();
+        #[cfg(target_os = "android")]
+        let connected = tokio_tungstenite::connect_async_tls_with_config(
+            url,
+            None,
+            false,
+            Some(tokio_tungstenite::Connector::Rustls(
+                super::tls::client_config(),
+            )),
+        )
+        .await;
+        // `connect_async` builds its TLS config from the process default
+        // provider, and rustls won't pick one itself when both ring and
+        // aws-lc-rs are compiled in: it panics. The server installs ring at
+        // boot; an embedding app (Flutter on macOS and iOS) may not have. An
+        // error only means a provider is already installed.
+        #[cfg(not(target_os = "android"))]
+        let connected = {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            connect_async(url).await
+        };
+        let (ws_stream, _response) =
+            connected.map_err(|e| format!("WebSocket connection failed to {}: {}", url, e))?;
 
         let origin = http_origin_of_ws_url(url);
         let server_capabilities = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -190,6 +217,7 @@ impl WsClient {
         let (tx, mut rx) = mpsc::channel::<Message>(64);
         let (broadcast_tx, _) = broadcast::channel::<WsMessage>(256);
         let broadcast_tx_clone = broadcast_tx.clone();
+        let (closed_tx, closed_rx) = watch::channel(false);
 
         // Writer task: forwards frames verbatim to the WebSocket
         tokio::spawn(async move {
@@ -227,6 +255,7 @@ impl WsClient {
                     let _ = broadcast_tx_clone.send(parsed);
                 }
             }
+            let _ = closed_tx.send(true);
         });
 
         let client = Self {
@@ -235,6 +264,7 @@ impl WsClient {
             origin,
             server_capabilities,
             challenge,
+            closed: closed_rx,
         };
         // Introduce ourselves: the capabilities we speak, so the server can
         // answer COMMIT with a slim COMMIT_OK. A pre-2026-09 server drops the
@@ -246,6 +276,22 @@ impl WsClient {
             ))
             .await?;
         Ok(client)
+    }
+
+    /// Whether the socket has closed (the server went away or dropped us).
+    pub fn is_closed(&self) -> bool {
+        *self.closed.borrow()
+    }
+
+    /// Resolves once the socket has closed. Used by load tests to notice a
+    /// server restart without waiting for a keepalive to fail.
+    pub async fn wait_closed(&self) {
+        let mut rx = self.closed.clone();
+        while !*rx.borrow_and_update() {
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
     }
 
     /// The nonce the server issued in its `CHALLENGE`, if it has arrived.
@@ -627,6 +673,7 @@ fn parse_binary_message(bin: &[u8]) -> Option<WsMessage> {
                 request_id: decoded.request_id,
                 commit_id: decoded.commit_id,
                 commit_json: decoded.commit_json,
+                pace_ms: decoded.pace_ms,
             })
         }
         tag::CHALLENGE => Some(WsMessage::Challenge {

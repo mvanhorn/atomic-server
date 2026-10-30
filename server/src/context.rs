@@ -30,7 +30,8 @@ impl RequestContext {
         // from the headers; anything else falls back to the configured origin.
         let origin = match host {
             Some(h) if host_is_served_by(h, appstate) => {
-                let p = proto.unwrap_or(if appstate.config.opts.https {
+                let configured = appstate.config.get_origin();
+                let p = proto.unwrap_or(if configured.starts_with("https://") {
                     "https"
                 } else {
                     "http"
@@ -41,6 +42,11 @@ impl RequestContext {
         };
 
         Self { origin }
+    }
+
+    /// The URL a client signs for `req`; see [crate::helpers::signed_subject].
+    pub fn signed_subject(&self, req: &HttpRequest) -> crate::errors::AtomicServerResult<String> {
+        crate::helpers::signed_subject(req, &self.origin)
     }
 }
 

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   accountCreationTarget,
   forgetServerPeer,
+  fetchManagedInfo,
+  readManagedBy,
   isAtomicServer,
   EMPTY_NODE_INFO,
   type ManagedInfo,
@@ -13,6 +15,20 @@ import {
 vi.mock('@tomic/react', () => ({
   signRequest: vi.fn(async (url: string) => ({ 'x-atomic-signed-url': url })),
 }));
+
+describe('public node metadata', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('omits cookies belonging to a different localhost server', async () => {
+    const fetcher = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetcher);
+    await fetchManagedInfo('http://localhost:9894');
+    expect(fetcher).toHaveBeenCalledWith('http://localhost:9894/server', {
+      headers: { Accept: 'application/ad+json' },
+      credentials: 'omit',
+    });
+  });
+});
 
 describe('accountCreationTarget', () => {
   it("managed node with a portal URL → the portal's sign-in form", () => {
@@ -234,5 +250,15 @@ describe('accountCreationTarget in a hosted distribution', () => {
     expect(accountCreationTarget({ managed: false, portalUrl: null })).toEqual({
       kind: 'local',
     });
+  });
+});
+
+describe('readManagedBy', () => {
+  it('keeps a trimmed non-empty string and drops everything else', () => {
+    expect(readManagedBy('  Acme Ltd ')).toBe('Acme Ltd');
+    expect(readManagedBy('   ')).toBeUndefined();
+    expect(readManagedBy('')).toBeUndefined();
+    expect(readManagedBy(null)).toBeUndefined();
+    expect(readManagedBy(42)).toBeUndefined();
   });
 });

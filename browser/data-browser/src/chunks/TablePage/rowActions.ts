@@ -4,6 +4,7 @@ import {
   type Property,
   type Resource,
 } from '@tomic/react';
+import { localCalendarDate } from '@helpers/dates/calendarDate';
 
 /**
  * The verbs a row action can perform.
@@ -113,9 +114,7 @@ export const ROW_ACTION_GENERATORS: Record<RowActionKind, RowActionGenerator> =
       // between them, so writing millis into a date column stored a value that
       // rendered as an empty cell and computed as no date at all.
       next: (_current, _spec, property) =>
-        property?.datatype === Datatype.DATE
-          ? new Date().toISOString().slice(0, 10)
-          : Date.now(),
+        property?.datatype === Datatype.DATE ? localCalendarDate() : Date.now(),
       isActive: current => current !== undefined && current !== '',
     },
     setValue: {
@@ -145,7 +144,7 @@ export const ROW_ACTION_GENERATORS: Record<RowActionKind, RowActionGenerator> =
         'Flips a checkbox column on and off. A grocery list’s "bought", a "starred".',
       defaultLabel: 'Toggle',
       accepts: property => property.datatype === Datatype.BOOLEAN,
-      width: 70,
+      width: 52,
       // Unset rather than `false`: a row that was never ticked and one that was
       // un-ticked should read the same, and an unset boolean is the datatype's
       // own idea of false.

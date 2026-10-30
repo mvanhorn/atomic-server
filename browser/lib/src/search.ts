@@ -9,12 +9,20 @@ export interface SearchOpts {
   include?: boolean;
   /** Max of how many results to return */
   limit?: number;
+  /**
+   * Called with the local-index hits as soon as they are available, while the
+   * hosted `/search` request may still be pending. The final result of
+   * `search()` includes these hits too. Not called when there are no local hits.
+   */
+  onPartial?: (subjects: string[]) => void;
   /** Subjects of resource to scope the search to. This should be a list of parents of the resources you're looking for. */
   parents?: string[] | string;
   /** Property-Value pair of set filters. */
   filters?: {
     [subject: string]: string | number | string[];
   };
+  /** Also return trashed resources. Hidden by default, like the server. */
+  includeTrashed?: boolean;
 }
 
 export interface SemanticSearchOpts {
@@ -80,6 +88,7 @@ export function buildSearchSubject(
   if (include) url.searchParams.set('include', include.toString());
   if (limit) url.searchParams.set('limit', limit.toString());
   if (hasFilters) url.searchParams.set('filters', buildFilterString(filters));
+  if (opts.includeTrashed) url.searchParams.set('include_trashed', 'true');
 
   if (parents) {
     if (Array.isArray(parents)) {

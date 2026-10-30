@@ -1,64 +1,53 @@
-import {
-  Datatype,
-  core,
-  server,
-  useProperty,
-  useCanWrite,
-  useStore,
-  type Resource,
-  type Server,
-  useArray,
-  dataBrowser,
-} from '@tomic/react';
+import { Datatype, core, useCanWrite, type Server } from '@tomic/react';
 import { ContainerNarrow } from '@components/Containers';
 import { Button } from '@components/Button';
 import { useSettings } from '@helpers/AppSettings';
 import { ResourcePageProps } from '../ResourcePage';
 import { EditableTitle } from '@components/EditableTitle';
+import { useVisibleDriveChildren } from '@hooks/useVisibleDriveChildren';
 import { useIsPrivateDrive } from '@hooks/useIsPrivateDrive';
 import { PrivateDriveBadge } from '@components/Drives/PrivateDriveBadge';
 import { ResourceCoverImage } from '@components/ResourceDecorations';
 import { Column, Row } from '@components/Row';
+import {
+  DriveSwitcher,
+  DriveSwitcherChevronTrigger,
+} from '@components/SideBar/DriveSwitcher';
 import { styled } from 'styled-components';
-import InputSwitcher from '@components/forms/InputSwitcher';
-import { SettingsGroup, SettingsSection } from '@components/Settings';
-
-import { lazy, Suspense, useEffect, useState, type JSX } from 'react';
-import { PluginList } from './PluginList';
-import { Tag } from '@components/Tag/Tag';
-import { CreateTagRow } from '@components/Tag/CreateTagRow';
-import { constructOpenURL } from '@helpers/navigation';
-import { useNavigateWithTransition } from '../../hooks/useNavigateWithTransition';
-import { FaXmark } from 'react-icons/fa6';
-import { QuickCreateRow } from '@components/NewInstanceButton';
-import { ResourceSideBar } from '@components/SideBar/ResourceSideBar/ResourceSideBar';
-import { ScrollArea } from '@components/ScrollArea';
-import { useChildren } from '@tomic/react';
-
+import { useDialog } from '@components/Dialog/useDialog';
+import { FaGear } from 'react-icons/fa6';
+import { useEffect, useState, type JSX } from 'react';
 import { useVectorIndexStatus } from '@hooks/useVectorIndexStatus';
 import { VectorIndexingIndicator } from '@components/VectorIndexingIndicator';
 import { ValueFormAddButton } from '@components/forms/ValueForm/ValueFormAddButton';
 import { FileDropZone } from '@components/forms/FileDropzone/FileDropzone';
-
-const NewPluginButton = lazy(() => import('@chunks/Plugins/NewPluginButton'));
+import { DriveSettingsDialog } from './DriveSettingsDialog';
+import { GettingStartedCard } from './GettingStartedCard';
+import { EmptyDriveStart } from './EmptyDriveStart';
+import {
+  ActivityFeed,
+  DrivePeople,
+  QuickCreateCards,
+  ResourceList,
+  SectionTitle,
+} from './DriveHome';
 
 /** A View for Drives, which function similar to a homepage or dashboard. */
 function DrivePage({ resource }: ResourcePageProps<Server.Drive>): JSX.Element {
   const { drive: baseURL, setDrive: setBaseURL } = useSettings();
-  const store = useStore();
-  const { subjects: subResources } = useChildren(resource.subject);
-  const [ancestry, setAncestry] = useState<string[]>([]);
-
-  useEffect(() => {
-    store.getResourceAncestry(resource).then(result => {
-      setAncestry(result);
-    });
-  }, [store, resource]);
+  const { subjects: subResources, loading } = useVisibleDriveChildren(
+    resource.subject,
+  );
+  const [dialogProps, showSettings, , settingsOpen] = useDialog();
 
   const vectorIndexing = useVectorIndexStatus();
 
-  const defaultOntologyProp = useProperty(server.properties.defaultOntology);
   const canEdit = useCanWrite(resource);
+  const empty = useSettledEmpty(!loading && subResources.length === 0);
+  // A starter being added: the drive has its first resource, not all of them.
+  const [filling, setFilling] = useState(false);
+  const showStart =
+    canEdit && (filling || (empty && subResources.length === 0));
   const isPrivateDrive = useIsPrivateDrive(resource.subject);
 
   if (!baseURL) {
@@ -71,27 +60,46 @@ function DrivePage({ resource }: ResourcePageProps<Server.Drive>): JSX.Element {
       <FileDropZone parentResource={resource}>
         <ContainerNarrow>
           <Column gap='2rem'>
-            <Row align='center' wrapItems gap='1rem'>
-              <EditableTitle
-                resource={resource}
-                withDecorations
-                // Its subject is derived from your key: there is exactly one and
-                // it cannot be swapped. A name like "Q3 Launch" on it would be a
-                // name that lies about what the thing is.
-                lockedReason={
-                  isPrivateDrive
-                    ? 'Your private drive keeps its name. It is tied to your account, not to a project.'
-                    : undefined
-                }
-              />
-              {isPrivateDrive && <PrivateDriveBadge />}
-              {vectorIndexing && <VectorIndexingIndicator />}
-              {baseURL !== resource.subject && (
-                <Button onClick={() => setBaseURL(resource.subject)}>
-                  Set as current drive
+            <Header>
+              <Row align='center' wrapItems gap='1rem'>
+                <EditableTitle
+                  resource={resource}
+                  withDecorations
+                  // Its subject is derived from your key: there is exactly one and
+                  // it cannot be swapped. A name like "Q3 Launch" on it would be a
+                  // name that lies about what the thing is.
+                  lockedReason={
+                    isPrivateDrive
+                      ? 'Your private drive keeps its name. It is tied to your account, not to a project.'
+                      : undefined
+                  }
+                />
+                <DriveSwitcher Trigger={DriveSwitcherChevronTrigger} />
+                {isPrivateDrive && <PrivateDriveBadge />}
+                {vectorIndexing && <VectorIndexingIndicator />}
+              </Row>
+              <Row align='center' wrapItems gap='0.75rem'>
+                <DrivePeople />
+                {baseURL !== resource.subject && (
+                  <Button subtle onClick={() => setBaseURL(resource.subject)}>
+                    Set as current drive
+                  </Button>
+                )}
+                <Button
+                  subtle
+                  onClick={showSettings}
+                  data-testid='drive-settings-button'
+                >
+                  <FaGear /> Drive settings
                 </Button>
-              )}
-            </Row>
+              </Row>
+            </Header>
+
+            {showStart && (
+              <EmptyDriveStart drive={resource.subject} onActive={setFilling} />
+            )}
+
+            <GettingStartedCard drive={resource} canEdit={canEdit} />
 
             <ValueFormAddButton
               resource={resource}
@@ -99,156 +107,71 @@ function DrivePage({ resource }: ResourcePageProps<Server.Drive>): JSX.Element {
               datatype={Datatype.MARKDOWN}
               buttonLabel='Add description'
             />
-            {canEdit && <QuickCreateRow parent={resource.subject} />}
 
-            <SettingsGroup>
-              <SettingsSection label='Resources'>
-                <DriveSubResourcesSection>
-                  <ScrollArea>
-                    {subResources.map(child => (
-                      <ResourceSideBar
-                        key={child}
-                        subject={child}
-                        renderedHierarchy={[resource.subject]}
-                        ancestry={ancestry}
-                      />
-                    ))}
-                  </ScrollArea>
-                </DriveSubResourcesSection>
-              </SettingsSection>
-              <SettingsSection label='Tags'>
-                <DriveTagList resource={resource} />
-              </SettingsSection>
-              <SettingsSection label='LLM Instructions'>
-                <p>
-                  A short description given to the AI Agent, use this to tell it
-                  what this drive is about, link important resources etc.
-                </p>
-                <ValueFormAddButton
-                  resource={resource}
-                  propertyURL={server.properties.llmTxt}
-                  datatype={Datatype.MARKDOWN}
-                  buttonLabel='Add LLM instructions'
-                />
-              </SettingsSection>
-              <SettingsSection label='Default Ontology'>
-                <InputSwitcher
-                  commit
-                  resource={resource}
-                  property={defaultOntologyProp}
-                  disabled={!canEdit}
-                />
-              </SettingsSection>
-              <SettingsSection label='Plugins'>
-                <Column gap='1rem'>
-                  <PluginList drive={resource} />
-                  {canEdit && (
-                    <Suspense fallback={null}>
-                      <NewPluginButton drive={resource} />
-                    </Suspense>
-                  )}
-                </Column>
-              </SettingsSection>
-            </SettingsGroup>
+            <ActivityFeed
+              key={resource.subject}
+              subjects={subResources}
+              drive={resource.subject}
+            />
+
+            {!showStart && (subResources.length > 0 || !canEdit) && (
+              <section>
+                <SectionTitle>Resources</SectionTitle>
+                {subResources.length > 0 ? (
+                  <ResourceList
+                    key={resource.subject}
+                    subjects={subResources}
+                  />
+                ) : (
+                  <p>Nothing here yet.</p>
+                )}
+              </section>
+            )}
+
+            {canEdit && !showStart && subResources.length > 0 && (
+              <QuickCreateCards parent={resource.subject} />
+            )}
           </Column>
         </ContainerNarrow>
       </FileDropZone>
+      <DriveSettingsDialog
+        drive={resource}
+        dialogProps={dialogProps}
+        isOpen={settingsOpen}
+      />
     </>
   );
 }
 
-function DriveTagList({ resource }: { resource: Resource }) {
-  const canEdit = useCanWrite(resource);
-  const navigate = useNavigateWithTransition();
-  const [tags, setTags, pushTags] = useArray(
-    resource,
-    dataBrowser.properties.tagList,
-    {
-      commit: true,
-    },
-  );
+/**
+ * Whether the drive has stayed empty for a moment. The child list is built in
+ * steps, so it reads empty for a beat while a full drive is still loading;
+ * the empty-drive start must not flash up then.
+ */
+function useSettledEmpty(empty: boolean): boolean {
+  const [settled, setSettled] = useState(false);
 
-  const handleDelete = (subject: string) => {
-    setTags(tags.filter(t => t !== subject));
-  };
+  useEffect(() => {
+    if (!empty) {
+      setSettled(false);
 
-  const handleNewTag = async (tag: Resource) => {
-    await tag.save();
-    pushTags([tag.subject]);
-  };
+      return;
+    }
 
-  const handleTagClick =
-    (subject: string): React.MouseEventHandler<HTMLAnchorElement> =>
-    e => {
-      e.preventDefault();
-      navigate(constructOpenURL(subject));
-    };
+    const timer = setTimeout(() => setSettled(true), 400);
 
-  if (tags.length === 0 && !canEdit) {
-    return null;
-  }
+    return () => clearTimeout(timer);
+  }, [empty]);
 
-  return (
-    <Column gap='0.75rem'>
-      <Row gap='0.5rem' wrapItems>
-        {tags.map(tag => (
-          <TagItem key={tag}>
-            <TagLink href={constructOpenURL(tag)} onClick={handleTagClick(tag)}>
-              <Tag subject={tag} />
-            </TagLink>
-            {canEdit && (
-              <DeleteTagButton
-                type='button'
-                title='Remove tag'
-                onClick={() => handleDelete(tag)}
-              >
-                <FaXmark />
-              </DeleteTagButton>
-            )}
-          </TagItem>
-        ))}
-      </Row>
-      {canEdit && (
-        <CreateTagRow parent={resource.subject} onNewTag={handleNewTag} />
-      )}
-    </Column>
-  );
+  return settled;
 }
 
 export default DrivePage;
 
-const TagItem = styled.span`
-  display: inline-flex;
+const Header = styled.div`
+  display: flex;
   align-items: center;
-  gap: 0.25ch;
-`;
-
-const TagLink = styled.a`
-  text-decoration: none;
-  display: contents;
-`;
-
-const DeleteTagButton = styled.button`
-  display: inline-flex;
-  align-items: center;
-  padding: 0.2em;
-  border: none;
-  background: transparent;
-  color: ${p => p.theme.colors.textLight};
-  cursor: pointer;
-  border-radius: ${p => p.theme.radius};
-  opacity: 0;
-  font-size: 0.75em;
-
-  ${TagItem}:hover & {
-    opacity: 1;
-  }
-
-  &:hover {
-    color: ${p => p.theme.colors.alert};
-  }
-`;
-
-const DriveSubResourcesSection = styled.div`
-  margin-top: 1rem;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
 `;

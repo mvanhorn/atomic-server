@@ -77,6 +77,9 @@ describe('Cloud Server setup', () => {
       expect(actualOrigin).toBe('https://cloud.example');
     });
     await enableCloudSyncForDrive(args);
+    expect(store.setServerUrl).toHaveBeenCalledWith('https://cloud.example', {
+      connect: false,
+    });
     expect(store.syncDriveToServerAndVerify).toHaveBeenCalledWith(drive);
   });
 
@@ -89,7 +92,7 @@ describe('Cloud Server setup', () => {
   it('does not report success when the node never receives the drive', async () => {
     const { args, store } = setup();
     store.syncDriveToServerAndVerify.mockRejectedValue(
-      new Error('The server is still missing this workspace root.'),
+      new Error('The server is still missing this drive root.'),
     );
     await expect(enableCloudSyncForDrive(args)).rejects.toThrow(/missing/);
   });

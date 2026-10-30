@@ -2,6 +2,10 @@ import { EditableTitle } from '@components/EditableTitle';
 import { ResourceCoverImage } from '@components/ResourceDecorations';
 import { dataBrowser, useLoroDoc, useLoroReady, useStore } from '@tomic/react';
 import type { ResourcePageProps } from '@views/ResourcePage';
+import {
+  FormattingToolbarToggle,
+  TitleRow,
+} from '@chunks/RTE/useFormattingToolbarVisible';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import styled from 'styled-components';
 import {
@@ -14,6 +18,7 @@ import {
   loroDocHasVisibleContent,
   upgradeDocument,
 } from './upgradeDocument';
+import { Spinner } from '../../components/Spinner';
 
 const CollaborativeEditor = lazy(
   () => import('@chunks/RTE/CollaborativeEditor'),
@@ -109,11 +114,11 @@ export const DocumentV2FullPage: React.FC<ResourcePageProps> = ({
       );
     }
 
-    return <div>Loading...</div>;
+    return <Spinner centered />;
   }
 
   if (!yjsMigrated) {
-    return <div>Loading...</div>;
+    return <Spinner centered />;
   }
 
   const focusEditor = () => {
@@ -124,13 +129,16 @@ export const DocumentV2FullPage: React.FC<ResourcePageProps> = ({
     <FullPageWrapper>
       <ResourceCoverImage resource={resource} />
       <DocumentContainer>
-        <EditableTitle
-          resource={resource}
-          onCommit={focusEditor}
-          withDecorations
-        />
+        <TitleRow>
+          <EditableTitle
+            resource={resource}
+            onCommit={focusEditor}
+            withDecorations
+          />
+          <FormattingToolbarToggle />
+        </TitleRow>
 
-        <Suspense fallback={<div>Loading...</div>}>
+        <Suspense fallback={<Spinner centered />}>
           <CollaborativeEditor
             id='document-editor'
             resource={resource}

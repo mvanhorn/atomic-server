@@ -1,12 +1,16 @@
+// First, so the catalog download starts before the rest of the app evaluates.
+import './helpers/preloadLocale';
 import { reactErrorHandler } from '@sentry/react';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { sha256, sha512 } from '@noble/hashes/sha2.js';
-// Before App: may turn a reload inside the demo into a fresh /app/demo.
-import './helpers/restartDemoOnReload';
 import App from './App';
 import { initSentry } from './helpers/sentry';
-import { afterNextPaint, hideBootSplash } from './helpers/bootSplash';
+import { reloadOnStaleChunk } from './helpers/staleChunkReload';
+import {
+  afterNextPaint,
+  hideBootSplashWhenSettled,
+} from './helpers/bootSplash';
 import { getManagedApiBase, hasManagedApi } from './helpers/managed/api';
 // Side-effect import: installs a global capture-phase `wheel` listener
 // before any route mounts. CanvasPage uses it to ignore momentum-scroll
@@ -69,6 +73,7 @@ if (
 
 // Before the first render, so errors thrown while mounting are reported too.
 initSentry();
+reloadOnStaleChunk();
 
 const root = createRoot(document.getElementById('root')!, {
   onCaughtError: reactErrorHandler(),
@@ -81,12 +86,10 @@ root.render(
   </StrictMode>,
 );
 
-// The demo keeps the boot splash up until its workspace is ready (DemoRoute).
-// Every other page is ready at its first render, as it was when the splash
-// lived inside #root and React replaced it.
-if (window.location.pathname !== '/app/demo') {
-  void afterNextPaint().then(() => hideBootSplash());
-}
+// The splash stays up until no loader of the app's own is showing, so the one
+// splash covers the whole wait instead of handing over to pane spinners of
+// another size and position.
+void afterNextPaint().then(() => hideBootSplashWhenSettled());
 
 // The account server is another origin, and the first session check against
 // it paid for DNS, TLS and CORS on the spot: 1.2 s on a first visit. Open the

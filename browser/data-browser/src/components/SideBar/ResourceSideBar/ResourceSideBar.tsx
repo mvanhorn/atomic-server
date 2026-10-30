@@ -12,12 +12,17 @@ import {
   core,
   dataBrowser,
   forms,
+  notifications,
   useResource,
   useCanWrite,
   unknownSubject,
 } from '@tomic/react';
 import { useChildren } from '@tomic/react';
-import { useCurrentSubject } from '../../../helpers/useCurrentSubject';
+// Evaluated here, ahead of the row's context menu, on purpose: the module cycle
+// routes > Dropdown > ResourceContextMenu only loads in an order that works
+// when this comes first ("Cannot access 'DIVIDER' before initialization").
+import '../../../helpers/useCurrentSubject';
+import { useAncestryIfAncestor, useIsCurrentSubject } from './SidebarSelection';
 import { SideBarItem } from '../SideBarItem';
 import { AtomicLink } from '../../AtomicLink';
 import { styled } from 'styled-components';
@@ -37,14 +42,13 @@ import { transition } from '../../../helpers/transition';
 interface ResourceSideBarProps {
   subject: string;
   renderedHierarchy: string[];
-  ancestry: string[];
   /** When a SideBar item is clicked, we should close the SideBar (on mobile devices) */
   onClick?: () => unknown;
 }
 
 /** Renders a Resource as a nav item for in the sidebar. */
 export const ResourceSideBar: React.FC<ResourceSideBarProps> = memo(
-  ({ subject, renderedHierarchy, ancestry, onClick }) => {
+  ({ subject, renderedHierarchy, onClick }) => {
     if (renderedHierarchy.length === 0) {
       throw new Error('renderedHierarchy should not be empty');
     }
@@ -61,9 +65,9 @@ export const ResourceSideBar: React.FC<ResourceSideBarProps> = memo(
     }
 
     const resource = useResource(subject, { allowIncomplete: true });
-    const [currentUrl] = useCurrentSubject();
     const canWrite = useCanWrite(resource);
-    const active = currentUrl === subject;
+    const active = useIsCurrentSubject(subject);
+    const ancestryWhenAncestor = useAncestryIfAncestor(subject);
     const [open, setOpen] = useState(active);
 
     // Classes that own their children's display in their own UI — skip the
@@ -181,7 +185,10 @@ export const ResourceSideBar: React.FC<ResourceSideBarProps> = memo(
     );
     const isDragging = draggingNode?.id === subject;
     const isHoveringOver = over?.data.current?.parent === subject;
-    const hierarchyWithItself = [...renderedHierarchy, subject];
+    const hierarchyWithItself = useMemo(
+      () => [...renderedHierarchy, subject],
+      [renderedHierarchy, subject],
+    );
 
     useEffect(() => {
       if (isDragging) {
@@ -190,12 +197,20 @@ export const ResourceSideBar: React.FC<ResourceSideBarProps> = memo(
     }, [isDragging]);
 
     useEffect(() => {
-      if (ancestry.includes(subject) && ancestry[0] !== subject) {
+      if (ancestryWhenAncestor) {
         setOpen(true);
       }
-    }, [ancestry, subject]);
+    }, [ancestryWhenAncestor]);
 
     if (!subject || subject === unknownSubject) {
+      return null;
+    }
+
+    // App data, not content: reached from Notifications, never the tree.
+    if (
+      classes.includes(notifications.classes.inbox) ||
+      classes.includes(notifications.classes.notification)
+    ) {
       return null;
     }
 
@@ -256,7 +271,6 @@ export const ResourceSideBar: React.FC<ResourceSideBarProps> = memo(
                   <ResourceSideBar
                     subject={child}
                     renderedHierarchy={hierarchyWithItself}
-                    ancestry={ancestry}
                     onClick={onClick}
                   />
                   {!websiteClass && (

@@ -10,6 +10,7 @@ import type { JSONValue } from './value.js';
 import { testStore } from './test-store.js';
 import { core } from './index.js';
 import { LoroLoader } from './loro-loader.js';
+import { LoroList as LoroListClass, LoroMap as LoroMapClass } from 'loro-crdt';
 
 describe('resource.ts', () => {
   it('reports buffered snapshots separately until WASM can materialize them', ({
@@ -90,6 +91,71 @@ describe('resource.ts', () => {
     expect(
       resource.get('https://atomicdata.dev/properties/subresources'),
     ).toStrictEqual([testsubject, testsubject2, testsubject, testsubject]);
+  });
+
+  it('ignores an unknown datatype tag and reads the raw value', async ({
+    expect,
+  }) => {
+    // The path an older client takes on a tag it does not know (e.g. the
+    // `string` tag): `normalizeLoroValue` only acts on the tags it knows.
+    const prop = 'https://example.com/unknown-tag';
+    const original = new Resource('https://example.com/unknown-tag-test');
+    await original.set(prop, '["a","b"]', false);
+    const doc = original.getLoroDoc()!;
+    doc.getMap('datatypes').set(prop, 'someFutureTag');
+    doc.commit();
+
+    const reloaded = new Resource('https://example.com/unknown-tag-test');
+    reloaded.importLoroUpdate(doc.export({ mode: 'snapshot' }));
+
+    expect(reloaded.get(prop)).toBe('["a","b"]');
+  });
+
+  it('stamps a plain doc.commit() with the time of the commit, not of the last one', async ({
+    expect,
+  }) => {
+    vi.useFakeTimers();
+
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const resource = new Resource('https://example.com/stamp-test');
+      await resource.set('https://example.com/p', 'a', false);
+      const doc = resource.getLoroDoc()!;
+      doc.commit();
+
+      // The editor plugin commits like this, long after the previous commit.
+      vi.setSystemTime(new Date('2026-01-01T00:10:00Z'));
+      doc.getMap('properties').set('https://example.com/p', 'b');
+      doc.commit({ origin: 'editor' });
+
+      const [peer, end] = [...doc.oplogVersion().toJSON()][0];
+      const { timestamp } = doc.getChangeAt({ peer, counter: end - 1 });
+
+      expect(timestamp).toBe(Date.parse('2026-01-01T00:10:00Z') / 1000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reads Null inside nested maps and lists without error', async ({
+    expect,
+  }) => {
+    const prop = 'https://example.com/nulls';
+    const original = new Resource('https://example.com/nulls-test');
+    await original.set(prop, 'placeholder', false);
+    const doc = original.getLoroDoc()!;
+    const props = doc.getMap('properties');
+    const map = props.setContainer(prop, new LoroMapClass());
+    map.set('a', null);
+    const list = map.setContainer('l', new LoroListClass());
+    list.push('x');
+    list.push(null);
+    doc.commit();
+
+    const reloaded = new Resource('https://example.com/nulls-test');
+    reloaded.importLoroUpdate(doc.export({ mode: 'snapshot' }));
+
+    expect(reloaded.get(prop)).toEqual({ a: null, l: ['x', null] });
   });
 
   it('getCreatedAt / getCreatedBy read the genesis change, surviving a snapshot round-trip', async ({
@@ -228,6 +294,21 @@ describe('resource.ts', () => {
     expect(reloaded.getCreatedBy()).toBe(genesisSignerDid(cert));
   });
 
+  it('names a pre-DID creator by the agent profile that is live today', async ({
+    expect,
+  }) => {
+    const resource = new Resource('https://example.com/old-message');
+    await resource.set(
+      'https://atomicdata.dev/properties/createdBy',
+      'https://atomicdata.dev/agents/QmfpRIBn2JYEatT0MjSkMNoBJzstz19orwnT5oT2rcQ=',
+      false,
+    );
+
+    expect(resource.getCreatedBy()).toBe(
+      'atomic:agent:QmfpRIBn2JYEatT0MjSkMNoBJzstz19orwnT5oT2rcQ=',
+    );
+  });
+
   it('merges remote state without dropping local unsaved loro edits', async ({
     expect,
   }) => {
@@ -359,6 +440,19 @@ describe('resource.ts', () => {
       doc.getMap('properties').get(prop) as unknown as { id?: string }
     )?.id;
     expect(newListId).toBe(originalListId);
+  });
+
+  it('keeps JSON null inside nested list items', async ({ expect }) => {
+    const prop = 'https://atomicdata.dev/ontology/canvas/strokeData';
+    const resource = new Resource('https://example.com/json-null');
+    resource.pushListItem(prop, { a: null, b: [1, null, { c: null }] });
+
+    const doc = resource.getLoroDoc()!;
+    const stored = doc.getMap('properties').toJSON() as Record<
+      string,
+      unknown[]
+    >;
+    expect(stored[prop].at(-1)).toEqual({ a: null, b: [1, null, { c: null }] });
   });
 
   it('replaceListItems only rewrites the changed part of a list', async ({
@@ -1017,6 +1111,49 @@ describe('getLoroHistory', () => {
     expect(history[history.length - 1].propvals.get(strokeData)).toEqual(
       r.get(strokeData),
     );
+  });
+
+  /**
+   * A drive restored from a "Discard history" backup holds shallow docs: the
+   * current state without the edit history before it. The History page must
+   * list what exists (here only the present) and never throw, and later edits
+   * must show up as new versions on top.
+   */
+  it('copes with a shallow doc and records later edits', async ({ expect }) => {
+    const source = new Resource('https://example.com/history-shallow');
+    await source.set(name, 'one', false);
+    source.getLoroDoc()!.commit({ message: 'a' });
+    await source.set(name, 'two', false);
+    source.getLoroDoc()!.commit({ message: 'b' });
+    const full = source.getLoroDoc()!;
+    const bytes = full.export({
+      mode: 'shallow-snapshot',
+      frontiers: full.frontiers(),
+    });
+
+    const shallow = new LoroLoader.Loro.LoroDoc();
+    shallow.import(bytes);
+    const r = new Resource('https://example.com/history-shallow');
+    vi.spyOn(r, 'getLoroDoc').mockReturnValue(shallow);
+
+    let before: ReturnType<Resource['getLoroHistory']> = [];
+    expect(() => {
+      before = r.getLoroHistory();
+    }).not.toThrow();
+    expect(before.length).toBeLessThan(full.getAllChanges().size + 3);
+
+    // A device with the full history can still send ops to the shallow doc
+    // and receive its own back.
+    shallow.getMap('properties').set(name, 'three');
+    shallow.commit({ message: 'c' });
+    full.import(shallow.export({ mode: 'update', from: full.version() }));
+    expect(full.getMap('properties').get(name)).toBe('three');
+
+    full.getMap('properties').set(name, 'four');
+    full.commit({ message: 'd' });
+    shallow.import(full.export({ mode: 'update', from: shallow.version() }));
+    expect(shallow.getMap('properties').get(name)).toBe('four');
+    expect(() => r.getLoroHistory()).not.toThrow();
   });
 
   /**

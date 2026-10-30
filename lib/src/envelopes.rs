@@ -46,8 +46,8 @@ pub enum EnvelopeRetention {
 impl EnvelopeRetention {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "latest" => Some(Self::Latest),
-            "all" | "full" => Some(Self::All),
+            "latest" | "compact" => Some(Self::Latest),
+            "all" | "full" | "audit" => Some(Self::All),
             _ => None,
         }
     }
@@ -104,7 +104,8 @@ fn key(subject: &str, created_at: i64, signature: &str) -> Vec<u8> {
     key
 }
 
-fn decode(key: &[u8], value: Vec<u8>) -> Option<StoredEnvelope> {
+/// The resource, `createdAt` and signature a row key encodes.
+fn parse_key(key: &[u8]) -> Option<(String, i64, String)> {
     let subject_end = key.iter().position(|b| *b == 0)?;
     let subject = std::str::from_utf8(&key[..subject_end]).ok()?.to_string();
     let rest = &key[subject_end + 1..];
@@ -113,13 +114,238 @@ fn decode(key: &[u8], value: Vec<u8>) -> Option<StoredEnvelope> {
     }
     let created_at = u64::from_be_bytes(rest[..8].try_into().ok()?) as i64;
     let signature = std::str::from_utf8(&rest[9..]).ok()?.to_string();
-    let json = String::from_utf8(value).ok()?;
-    Some(StoredEnvelope {
+    Some((subject, created_at, signature))
+}
+
+/// What a stored row turned into.
+enum Decoded {
+    Row(StoredEnvelope),
+    /// A row that is neither whole JSON nor a well-formed compact row.
+    Unreadable,
+}
+
+fn decode(store: &Db, key: &[u8], value: Vec<u8>) -> Option<Decoded> {
+    let (subject, created_at, signature) = parse_key(key)?;
+    let json = match value.first() {
+        Some(&GENESIS_ROW) => match envelope_from_commit_row(store, &subject, &signature) {
+            Some(envelope) => envelope.json,
+            None => return Some(Decoded::Unreadable),
+        },
+        Some(&COMPACT_V1) => match rebuild_json(&subject, created_at, &signature, &value) {
+            Some(json) => json,
+            None => return Some(Decoded::Unreadable),
+        },
+        _ => String::from_utf8(value).ok()?,
+    };
+    Some(Decoded::Row(StoredEnvelope {
         subject,
         created_at,
         signature,
         json,
-    })
+    }))
+}
+
+// A compact row keeps what the key does not hold, and nothing is derived from
+// the Loro doc: the signed `loroUpdate` bytes are stored as they were signed.
+//
+//   0x01 | has_previous | signer[32] | [previousCommit[64]] | loroUpdate bytes
+//
+// `signer` and `previousCommit` are raw bytes of the usual `atomic:agent:` /
+// `atomic:commit:` ids; a commit with any other shape is stored as JSON. A
+// legacy row is the commit JSON and starts with `{`, so the tag byte tells
+// them apart.
+const COMPACT_V1: u8 = 1;
+/// A genesis envelope whose commit is the `Tree::Resources` row of the same
+/// signature: the row is only this tag, the JSON comes from the commit row.
+const GENESIS_ROW: u8 = 2;
+const AGENT_PREFIX: &str = "atomic:agent:";
+
+/// `value` as raw bytes when it is `prefix` plus the unpadded base64url form
+/// of `len` bytes, and re-encodes to exactly that.
+fn raw_id(value: &str, prefix: &str, len: usize) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let body = value.strip_prefix(prefix)?;
+    let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(body)
+        .ok()?;
+    (raw.len() == len && base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&raw) == body)
+        .then_some(raw)
+}
+
+fn id_from_raw(prefix: &str, raw: &[u8]) -> String {
+    use base64::Engine;
+    format!(
+        "{prefix}{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)
+    )
+}
+
+/// The commit JSON-AD for a compact row, in the key order and spelling
+/// `Resource::to_json_ad` writes. Needs nothing but the row and its key.
+fn rebuild_json(subject: &str, created_at: i64, signature: &str, row: &[u8]) -> Option<String> {
+    use base64::Engine;
+    let (&[tag, has_previous], rest) = row.split_first_chunk::<2>()?;
+    if tag != COMPACT_V1 || has_previous > 1 {
+        return None;
+    }
+    let (signer, rest) = rest.split_at_checked(32)?;
+    let (previous, update) = if has_previous == 1 {
+        let (previous, update) = rest.split_at_checked(64)?;
+        (
+            Some(id_from_raw(
+                crate::identifiers::ATOMIC_COMMIT_PREFIX,
+                previous,
+            )),
+            update,
+        )
+    } else {
+        (None, rest)
+    };
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "@id".into(),
+        crate::identifiers::commit_subject(signature).into(),
+    );
+    map.insert(crate::urls::CREATED_AT.into(), created_at.into());
+    map.insert(
+        crate::urls::IS_A.into(),
+        serde_json::json!([crate::urls::COMMIT]),
+    );
+    map.insert(
+        crate::urls::LORO_UPDATE.into(),
+        base64::engine::general_purpose::STANDARD
+            .encode(update)
+            .into(),
+    );
+    if let Some(previous) = previous {
+        map.insert(crate::urls::PREVIOUS_COMMIT.into(), previous.into());
+    }
+    map.insert(crate::urls::SIGNATURE.into(), signature.into());
+    map.insert(
+        crate::urls::SIGNER.into(),
+        id_from_raw(AGENT_PREFIX, signer).into(),
+    );
+    map.insert(crate::urls::SUBJECT.into(), subject.into());
+    serde_json::to_string(&map).ok()
+}
+
+/// The compact row for a commit, when the row alone rebuilds its JSON byte
+/// for byte. Anything else (an unknown field, odd id shapes, another spelling)
+/// is `None`, and the caller stores the full JSON.
+fn compact_row(subject: &str, created_at: i64, signature: &str, json: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let map = value.as_object()?;
+    let text = |key: &str| map.get(key).and_then(|v| v.as_str());
+    let update = base64::engine::general_purpose::STANDARD
+        .decode(text(crate::urls::LORO_UPDATE)?)
+        .ok()?;
+    let previous = match text(crate::urls::PREVIOUS_COMMIT) {
+        Some(p) => Some(raw_id(p, crate::identifiers::ATOMIC_COMMIT_PREFIX, 64)?),
+        None => None,
+    };
+    let mut row = vec![COMPACT_V1, u8::from(previous.is_some())];
+    row.extend(raw_id(text(crate::urls::SIGNER)?, AGENT_PREFIX, 32)?);
+    row.extend(previous.into_iter().flatten());
+    row.extend(update);
+    (rebuild_json(subject, created_at, signature, &row).as_deref() == Some(json)).then_some(row)
+}
+
+/// The value to store for a commit envelope: the compact row when it rebuilds
+/// the JSON exactly, the commit JSON otherwise.
+fn value_for(subject: &str, created_at: i64, signature: &str, json: String) -> Vec<u8> {
+    let pure = crate::Subject::from_raw(subject, None).pure_id();
+    compact_row(&pure, created_at, signature, &json).unwrap_or_else(|| json.into_bytes())
+}
+
+/// Most ancestors [`resolve_retention`] looks at. A parent chain is a few
+/// levels deep; the bound only keeps a corrupt cycle from looping.
+const MAX_PARENT_DEPTH: usize = 32;
+
+/// What a resource's `retention` property, and that of its ancestors, add up to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resolved {
+    /// The resource or an ancestor says `audit`.
+    Audit,
+    /// The whole chain was read and none says `audit`: the node's setting applies.
+    Compact,
+    /// An ancestor could not be read (not held here yet), so an `audit` above
+    /// it may exist. Callers that cannot undo a drop treat it as `Audit`.
+    Unknown,
+}
+
+/// Reads the resource and its parent chain (propvals only, one shallow read
+/// per level) and says whether any of them asks for `audit`. Audit only ever
+/// wins: a `compact` on a child cannot lower an `audit` above it, so a setting
+/// made on a folder holds for everything below it.
+///
+/// `resource` is the state a commit produced, or the last state for a destroy;
+/// `None` is [`Resolved::Unknown`].
+pub fn resolve_retention(store: &Db, resource: Option<&crate::Resource>) -> Resolved {
+    let Some(start) = resource else {
+        return Resolved::Unknown;
+    };
+    if is_audit(start) {
+        return Resolved::Audit;
+    }
+    let mut parent = parent_of(start);
+    for _ in 0..MAX_PARENT_DEPTH {
+        let Some(subject) = parent else {
+            return Resolved::Compact;
+        };
+        let Ok(ancestor) = store.get_resource_shallow(&subject) else {
+            return Resolved::Unknown;
+        };
+        if is_audit(&ancestor) {
+            return Resolved::Audit;
+        }
+        parent = parent_of(&ancestor);
+    }
+    Resolved::Compact
+}
+
+/// The retention that applies to a resource: the node's setting, raised to
+/// `All` when the resource or an ancestor asks for `audit`. An unreadable
+/// ancestor counts as the node's setting here; see [`Resolved::Unknown`].
+pub fn effective_retention(store: &Db, resource: Option<&crate::Resource>) -> EnvelopeRetention {
+    if store.envelope_retention() == EnvelopeRetention::All {
+        return EnvelopeRetention::All;
+    }
+    match resolve_retention(store, resource) {
+        Resolved::Audit => EnvelopeRetention::All,
+        Resolved::Compact | Resolved::Unknown => EnvelopeRetention::Latest,
+    }
+}
+
+/// True for the two values a `retention` property may hold.
+pub fn is_valid_retention_value(value: &str) -> bool {
+    matches!(value, "compact" | "audit")
+}
+
+/// Refuses a `retention` value that is neither `compact` nor `audit`, so a
+/// typo cannot silently mean "no audit".
+pub fn check_retention_value(resource: &crate::Resource) -> AtomicResult<()> {
+    match resource.get(crate::urls::RETENTION) {
+        Ok(value) if !is_valid_retention_value(&value.to_string()) => Err(format!(
+            "`retention` on {} must be `compact` or `audit`, got `{}`",
+            resource.get_subject(),
+            value
+        )
+        .into()),
+        _ => Ok(()),
+    }
+}
+
+fn is_audit(resource: &crate::Resource) -> bool {
+    resource
+        .get(crate::urls::RETENTION)
+        .ok()
+        .is_some_and(|value| value.to_string() == "audit")
+}
+
+fn parent_of(resource: &crate::Resource) -> Option<crate::Subject> {
+    let parent = resource.get(crate::urls::PARENT).ok()?.to_string();
+    (!parent.is_empty()).then(|| crate::Subject::from(parent.as_str()))
 }
 
 /// Queue the writes that keep this commit's envelope, honouring the store's
@@ -141,9 +367,24 @@ pub fn record_ops(
     if genesis_is_kept_as_row(response) {
         return Ok(());
     }
-    // Later commits: under `All` the genesis envelope is history that has to
+    // A commit that takes audit away (clears `retention`, or moves the
+    // resource out of an audited folder) is still written under audit: the
+    // state before it asked for the full log, so its envelope joins it and
+    // the history written so far is kept. Only the commits after it prune,
+    // and each of those drops just the envelope it supersedes.
+    // A state whose ancestor chain cannot be read might be audited, so it
+    // counts as audited too: nothing is dropped on a guess.
+    let audited = store.envelope_retention() == EnvelopeRetention::All
+        || [
+            response.resource_new.as_ref(),
+            response.resource_old.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|state| resolve_retention(store, Some(state)) != Resolved::Compact);
+    // Later commits: under audit the genesis envelope is history that has to
     // stay, so write it out before something newer sits beside it.
-    if store.envelope_retention() == EnvelopeRetention::All {
+    if audited {
         let nothing_stored = store
             .kv
             .scan_prefix(Tree::Envelopes, &prefix(subject))
@@ -161,10 +402,20 @@ pub fn record_ops(
         }
     }
 
-    if store.envelope_retention() == EnvelopeRetention::Latest {
-        for existing in store.kv.scan_prefix(Tree::Envelopes, &prefix(subject)) {
-            let (old_key, _) = existing?;
-            if old_key != new_key {
+    if !audited {
+        // The one envelope this one supersedes. Rows written under audit,
+        // before a lowering, stay.
+        let superseded = store
+            .kv
+            .scan_prefix(Tree::Envelopes, &prefix(subject))
+            .last();
+        if let Some(existing) = superseded {
+            let (old_key, old_val) = existing?;
+            // A newest row that cannot be read is not the one to supersede:
+            // it stays until someone can say what it was.
+            if old_key != new_key
+                && matches!(decode(store, &old_key, old_val), Some(Decoded::Row(_)))
+            {
                 transaction.push(Operation {
                     tree: Tree::Envelopes,
                     method: Method::Delete,
@@ -175,27 +426,80 @@ pub fn record_ops(
         }
     }
 
+    // A creation whose id is not its commit signature (a genesis
+    // certificate) keeps a tag row instead of a second copy of the signed
+    // bytes, when the commit row queued in this transaction rebuilds the
+    // same JSON.
+    let val = if response.auth_impact().genesis
+        && response.resource_new.is_some()
+        && commit_row_rebuilds(transaction, signature, &json)
+    {
+        vec![GENESIS_ROW]
+    } else {
+        value_for(subject, response.commit.created_at, signature, json)
+    };
     transaction.push(Operation {
         tree: Tree::Envelopes,
         method: Method::Insert,
         key: new_key,
-        val: Some(json.into_bytes()),
+        val: Some(val),
     });
     Ok(())
 }
 
-/// Every retained envelope of a resource, oldest first.
-pub fn envelopes(store: &Db, subject: &str) -> Vec<StoredEnvelope> {
-    let mut rows: Vec<StoredEnvelope> = store
+/// What a scan of a resource's envelope rows found.
+pub struct Retained {
+    /// Readable envelopes, oldest first.
+    pub rows: Vec<StoredEnvelope>,
+    /// Rows that exist but cannot be decoded. They are not in `rows`; a
+    /// caller that ships or prunes must account for them.
+    pub unreadable: usize,
+    /// Whether the newest row (the one that produced the current state) is
+    /// one of the unreadable ones.
+    pub newest_unreadable: bool,
+}
+
+/// Every retained envelope of a resource, oldest first, and what could not be
+/// read.
+pub fn envelopes_checked(store: &Db, subject: &str) -> Retained {
+    let mut out = Retained {
+        rows: Vec::new(),
+        unreadable: 0,
+        newest_unreadable: false,
+    };
+    for (k, v) in store
         .kv
         .scan_prefix(Tree::Envelopes, &prefix(subject))
         .filter_map(|entry| entry.ok())
-        .filter_map(|(k, v)| decode(&k, v))
-        .collect();
-    if rows.is_empty() {
-        rows.extend(genesis_envelope_from_row(store, subject));
+    {
+        match decode(store, &k, v) {
+            Some(Decoded::Row(row)) => {
+                out.rows.push(row);
+                out.newest_unreadable = false;
+            }
+            Some(Decoded::Unreadable) | None => {
+                out.unreadable += 1;
+                out.newest_unreadable = true;
+            }
+        }
     }
-    rows
+    if out.rows.is_empty() && out.unreadable == 0 {
+        out.rows.extend(genesis_envelope_from_row(store, subject));
+    }
+    out
+}
+
+/// Readable envelopes only, oldest first. Unreadable rows are logged, not
+/// returned; use [`envelopes_checked`] where their absence changes the answer.
+pub fn envelopes(store: &Db, subject: &str) -> Vec<StoredEnvelope> {
+    let found = envelopes_checked(store, subject);
+    if found.unreadable > 0 {
+        tracing::warn!(
+            "{subject}: {} kept commit row(s) could not be read",
+            found.unreadable
+        );
+    }
+    found.rows
 }
 
 /// The signature that names `subject`, when it is a resource whose id was
@@ -216,8 +520,31 @@ fn genesis_signature(subject: &str) -> Option<String> {
 /// from that row: the row is the commit resource the envelope was written
 /// from, so the JSON is the same.
 fn genesis_envelope_from_row(store: &Db, subject: &str) -> Option<StoredEnvelope> {
-    let signature = genesis_signature(subject)?;
-    let commit_id = crate::identifiers::commit_subject(&signature);
+    envelope_from_commit_row(store, subject, &genesis_signature(subject)?)
+}
+
+/// Whether the commit row queued in `transaction` for `signature` gives back
+/// exactly `json` when read, so a tag row can stand in for the envelope.
+fn commit_row_rebuilds(transaction: &Transaction, signature: &str, json: &str) -> bool {
+    let id = crate::identifiers::commit_subject(signature);
+    transaction
+        .iter()
+        .rev()
+        .find(|op| op.tree == Tree::Resources && op.key == id.as_bytes())
+        .and_then(|op| op.val.as_deref())
+        .and_then(|bin| crate::db::encoding::decode_propvals(bin).ok())
+        .and_then(|propvals| {
+            crate::Resource::from_propvals(propvals, crate::Subject::from_raw(&id, None))
+                .to_json_ad(None)
+                .ok()
+        })
+        .as_deref()
+        == Some(json)
+}
+
+/// The envelope of the commit stored as the row `signature` names.
+fn envelope_from_commit_row(store: &Db, subject: &str, signature: &str) -> Option<StoredEnvelope> {
+    let commit_id = crate::identifiers::commit_subject(signature);
     let propvals = store.get_propvals(&commit_id).ok()?;
     let row = crate::Resource::from_propvals(propvals, crate::Subject::from_raw(&commit_id, None));
     let created_at = row.get(crate::urls::CREATED_AT).ok()?.to_int().ok()?;
@@ -225,7 +552,7 @@ fn genesis_envelope_from_row(store: &Db, subject: &str) -> Option<StoredEnvelope
     Some(StoredEnvelope {
         subject: subject.to_string(),
         created_at,
-        signature,
+        signature: signature.to_string(),
         json,
     })
 }
@@ -242,12 +569,39 @@ fn genesis_is_kept_as_row(response: &CommitResponse) -> bool {
 }
 
 /// The envelope that produced the resource's current state, if kept.
+/// `None` when that newest row cannot be read: an older row would be the
+/// wrong answer.
 pub fn latest_envelope(store: &Db, subject: &str) -> Option<StoredEnvelope> {
-    envelopes(store, subject).into_iter().last()
+    let found = envelopes_checked(store, subject);
+    if found.newest_unreadable {
+        tracing::warn!("{subject}: the newest kept commit row could not be read");
+        return None;
+    }
+    found.rows.into_iter().last()
+}
+
+/// The commit id of the newest retained envelope, read from the row key
+/// alone (no row is decoded). The id `lastCommit` is served as when the
+/// stored row does not carry it.
+pub fn latest_commit_id(store: &Db, subject: &str) -> Option<String> {
+    let (key, _) = store
+        .kv
+        .scan_prefix(Tree::Envelopes, &prefix(subject))
+        .filter_map(|entry| entry.ok())
+        .last()?;
+    let (_, _, signature) = parse_key(&key)?;
+    Some(crate::identifiers::commit_subject(&signature))
+}
+
+/// The id of the genesis commit of a resource whose id was derived from it
+/// (its row is kept; see [`genesis_envelope_from_row`]).
+pub fn genesis_commit_id(subject: &str) -> Option<String> {
+    genesis_signature(subject).map(|signature| crate::identifiers::commit_subject(&signature))
 }
 
 /// The retained envelopes of each subject as commit JSON-AD, for a bulk
-/// push or a vault pack. Subjects with none are absent.
+/// push or a vault pack. Subjects with none are absent. A subject with rows
+/// that cannot be read ships the rest and logs a warning.
 pub fn for_subjects<'a>(
     store: &Db,
     subjects: impl IntoIterator<Item = &'a str>,
@@ -292,14 +646,28 @@ pub async fn import_envelope(store: &Db, expected_subject: &str, json: &str) -> 
     }
 
     let mut ops = Vec::new();
-    if store.envelope_retention() == EnvelopeRetention::Latest {
-        let existing = envelopes(store, commit.subject.as_str());
-        if existing.iter().any(|e| e.created_at > commit.created_at) {
+    let local = store.get_resource_shallow(&commit.subject).ok();
+    // An ancestor that is not held yet may be the one asking for audit, and a
+    // dropped envelope cannot be fetched again, so only a fully read chain
+    // allows pruning.
+    let may_prune = store.envelope_retention() == EnvelopeRetention::Latest
+        && resolve_retention(store, local.as_ref()) == Resolved::Compact;
+    if may_prune {
+        let found = envelopes_checked(store, commit.subject.as_str());
+        let existing = found.rows;
+        if found.newest_unreadable {
+            // The newest row cannot be compared or safely superseded: keep
+            // it and add the incoming one beside it.
+            tracing::warn!(
+                "{}: newest kept commit row unreadable, importing without pruning",
+                commit.subject.as_str()
+            );
+        } else if existing.iter().any(|e| e.created_at > commit.created_at) {
             // A newer envelope is already the latest; the incoming one is
             // history this node chose not to keep.
             return Ok(());
         }
-        for old in existing {
+        if let Some(old) = existing.last().filter(|_| !found.newest_unreadable) {
             ops.push(Operation {
                 tree: Tree::Envelopes,
                 method: Method::Delete,
@@ -312,7 +680,12 @@ pub async fn import_envelope(store: &Db, expected_subject: &str, json: &str) -> 
         tree: Tree::Envelopes,
         method: Method::Insert,
         key: new_key,
-        val: Some(json.as_bytes().to_vec()),
+        val: Some(value_for(
+            commit.subject.as_str(),
+            commit.created_at,
+            signature,
+            json.to_string(),
+        )),
     });
     store.kv.apply_batch(&ops)
 }
@@ -356,8 +729,9 @@ pub struct Attribution {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct HistoryAttribution {
     pub subject: String,
-    /// Retention this node runs; tells a reader whether missing attributions
-    /// are a gap or a policy.
+    /// Retention that applies to this resource (the node's setting, raised
+    /// by a `retention: audit` on it or an ancestor); tells a reader whether
+    /// missing attributions are a gap or a policy.
     pub retention: &'static str,
     /// Oldest first.
     pub attributions: Vec<Attribution>,
@@ -367,6 +741,11 @@ pub struct HistoryAttribution {
     /// is not counted. `false` while the subject is destroyed or nothing is
     /// retained.
     pub complete: bool,
+    /// Retained envelopes that could not be rebuilt from their compact row
+    /// (the stored Loro doc is gone or no longer reproduces the signed
+    /// update). They are not in `attributions`, and `complete` is `false`
+    /// while any exist.
+    pub unreadable: usize,
 }
 
 /// Verify the retained envelopes of a resource and map them onto its Loro
@@ -376,7 +755,14 @@ pub struct HistoryAttribution {
 /// in the stored oplog is claimed by a verified envelope. Anything not
 /// covered is unattributed, never a guessed signer.
 pub async fn attribute_history(store: &Db, subject: &str) -> AtomicResult<HistoryAttribution> {
-    let retention = store.envelope_retention().as_str();
+    let retention = effective_retention(
+        store,
+        store
+            .get_resource_shallow(&crate::Subject::from(subject))
+            .ok()
+            .as_ref(),
+    )
+    .as_str();
     let mut attributions: Vec<Attribution> = Vec::new();
     let pure = crate::Subject::from_raw(subject, None).pure_id();
     // The stored doc is where an update's changes can be read back with
@@ -389,7 +775,12 @@ pub async fn attribute_history(store: &Db, subject: &str) -> AtomicResult<Histor
         .flatten()
         .and_then(|bytes| crate::loro::AtomicLoroDoc::from_snapshot(&bytes).ok());
 
-    for envelope in envelopes(store, subject) {
+    let Retained {
+        rows: retained,
+        unreadable,
+        ..
+    } = envelopes_checked(store, subject);
+    for envelope in retained {
         let resource = crate::parse::parse_json_ad_commit_resource(&envelope.json, store).await?;
         let commit = crate::commit::Commit::from_resource(resource)?;
         let verified = commit.validate_signature(store).await.is_ok();
@@ -440,6 +831,7 @@ pub async fn attribute_history(store: &Db, subject: &str) -> AtomicResult<Histor
     let complete = match stored_tokens {
         Some(tokens) => {
             !attributions.is_empty()
+                && unreadable == 0
                 && tokens
                     .iter()
                     .filter(|token| !is_genesis_carrier(token))
@@ -457,6 +849,7 @@ pub async fn attribute_history(store: &Db, subject: &str) -> AtomicResult<Histor
         retention,
         attributions,
         complete,
+        unreadable,
     })
 }
 
@@ -493,6 +886,258 @@ mod tests {
             .await
             .unwrap();
         crate::Subject::from_raw(&subject, None)
+    }
+
+    /// Sets the resource's `retention` through a signed commit.
+    async fn set_retention(db: &Db, subject: &crate::Subject, value: &str) {
+        let mut resource = db.get_resource(subject).await.unwrap();
+        resource
+            .set(urls::RETENTION.into(), Value::String(value.into()), db)
+            .await
+            .unwrap();
+        resource.save_locally(db).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_audited_resource_keeps_every_envelope_beside_a_compact_sibling() {
+        let db = Db::init_temp("envelopes_per_resource").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let audited = child(&db, &drive).await;
+        let plain = child(&db, &drive).await;
+        set_retention(&db, &audited, "audit").await;
+        for name in ["one", "two", "three"] {
+            signed_edit(&db, &audited, name).await;
+            signed_edit(&db, &plain, name).await;
+        }
+        assert_eq!(
+            envelopes(&db, audited.as_str()).len(),
+            5,
+            "genesis, the retention commit and three edits"
+        );
+        assert_eq!(
+            envelopes(&db, plain.as_str()).len(),
+            1,
+            "the node default still keeps one"
+        );
+        let report = attribute_history(&db, audited.as_str()).await.unwrap();
+        assert_eq!(report.retention, "all");
+        let report = attribute_history(&db, plain.as_str()).await.unwrap();
+        assert_eq!(report.retention, "latest");
+    }
+
+    #[tokio::test]
+    async fn audit_on_a_folder_holds_below_it_and_a_child_cannot_lower_it() {
+        let db = Db::init_temp("envelopes_inherited").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let folder = child(&db, &drive).await;
+        set_retention(&db, &folder, "audit").await;
+        let kid = child(&db, folder.as_str()).await;
+        set_retention(&db, &kid, "compact").await;
+        for name in ["one", "two"] {
+            signed_edit(&db, &kid, name).await;
+        }
+        assert_eq!(
+            envelopes(&db, kid.as_str()).len(),
+            4,
+            "genesis, the compact setting and two edits all stay"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_node_running_all_is_not_lowered_by_a_compact_resource() {
+        let db = Db::init_temp("envelopes_node_all").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        set_retention(&db, &subject, "compact").await;
+        signed_edit(&db, &subject, "one").await;
+        assert_eq!(envelopes(&db, subject.as_str()).len(), 3);
+    }
+
+    /// Taking `audit` off never deletes the audit era: the lowering commit
+    /// is kept beside the earlier rows, and only later commits prune the
+    /// newest superseded envelope (which, after one edit, is the lowering
+    /// commit itself).
+    #[tokio::test]
+    async fn lowering_audit_keeps_the_audit_era() {
+        let db = Db::init_temp("envelopes_lowered").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        set_retention(&db, &subject, "audit").await;
+        signed_edit(&db, &subject, "one").await;
+        assert_eq!(envelopes(&db, subject.as_str()).len(), 3);
+        set_retention(&db, &subject, "compact").await;
+        assert_eq!(
+            envelopes(&db, subject.as_str()).len(),
+            4,
+            "the lowering commit is kept beside the audit era"
+        );
+        let audit_era: Vec<String> = envelopes(&db, subject.as_str())
+            .iter()
+            .take(3)
+            .map(|e| e.signature.clone())
+            .collect();
+        for name in ["two", "three", "four"] {
+            signed_edit(&db, &subject, name).await;
+        }
+        let kept = envelopes(&db, subject.as_str());
+        assert_eq!(kept.len(), 4, "later commits replace only the newest row");
+        let kept_sigs: Vec<String> = kept.iter().take(3).map(|e| e.signature.clone()).collect();
+        assert_eq!(kept_sigs, audit_era, "the audit era stays untouched");
+    }
+
+    #[tokio::test]
+    async fn resolve_retention_reads_compact_and_audit() {
+        let db = Db::init_temp("envelopes_resolve").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let plain = child(&db, &drive).await;
+        let audited = child(&db, &drive).await;
+        set_retention(&db, &audited, "audit").await;
+        let kid = child(&db, audited.as_str()).await;
+        let explicit = child(&db, &drive).await;
+        set_retention(&db, &explicit, "compact").await;
+        for (subject, want) in [
+            (&plain, Resolved::Compact),
+            (&audited, Resolved::Audit),
+            (&kid, Resolved::Audit),
+            (&explicit, Resolved::Compact),
+        ] {
+            let resource = db.get_resource(subject).await.unwrap();
+            assert_eq!(resolve_retention(&db, Some(&resource)), want);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_local_write_under_an_unreadable_ancestor_prunes_nothing() {
+        let db = Db::init_temp("envelopes_unknown_local").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        let mut resource = db.get_resource(&subject).await.unwrap();
+        resource
+            .set(
+                urls::PARENT.into(),
+                Value::AtomicUrl(crate::Subject::from_raw(
+                    "https://example.com/not-held",
+                    None,
+                )),
+                &db,
+            )
+            .await
+            .unwrap();
+        resource.save_locally(&db).await.unwrap();
+        signed_edit(&db, &subject, "one").await;
+        assert!(envelopes(&db, subject.as_str()).len() >= 2);
+    }
+
+    /// The commit that takes audit off is an authorization-relevant commit:
+    /// it is kept as a commit resource, so who lowered audit stays provable
+    /// after later edits replace its envelope row.
+    #[tokio::test]
+    async fn the_commit_that_lowers_audit_stays_provable() {
+        let db = Db::init_temp("envelopes_lowering_kept").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        set_retention(&db, &subject, "audit").await;
+        let mut resource = db.get_resource(&subject).await.unwrap();
+        resource
+            .set(urls::RETENTION.into(), Value::String("compact".into()), &db)
+            .await
+            .unwrap();
+        let response = resource.save_locally(&db).await.unwrap();
+        let lowering = response.commit_resource.get_subject().to_string();
+        for name in ["one", "two"] {
+            signed_edit(&db, &subject, name).await;
+        }
+        assert!(db.has_resource_locally(&lowering));
+    }
+
+    #[tokio::test]
+    async fn moving_out_of_an_audited_folder_keeps_the_audit_era() {
+        let db = Db::init_temp("envelopes_moved_out").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let folder = child(&db, &drive).await;
+        set_retention(&db, &folder, "audit").await;
+        let kid = child(&db, folder.as_str()).await;
+        signed_edit(&db, &kid, "one").await;
+        assert_eq!(envelopes(&db, kid.as_str()).len(), 2);
+        let mut resource = db.get_resource(&kid).await.unwrap();
+        resource
+            .set(
+                urls::PARENT.into(),
+                Value::AtomicUrl(crate::Subject::from_raw(&drive, None)),
+                &db,
+            )
+            .await
+            .unwrap();
+        resource.save_locally(&db).await.unwrap();
+        assert_eq!(
+            envelopes(&db, kid.as_str()).len(),
+            3,
+            "the move out is kept beside the audit era"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_invalid_retention_value_is_refused() {
+        let db = Db::init_temp("envelopes_invalid_value").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        let mut resource = db.get_resource(&subject).await.unwrap();
+        resource
+            .set(urls::RETENTION.into(), Value::String("audits".into()), &db)
+            .await
+            .unwrap();
+        assert!(resource.save_locally(&db).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn import_envelope_keeps_every_envelope_of_a_resource_marked_audit() {
+        let source = Db::init_temp("envelopes_import_audit_source")
+            .await
+            .unwrap();
+        let (_alice, drive) = source.setup("Alice").await.unwrap();
+        let subject = child(&source, &drive).await;
+        set_retention(&source, &subject, "audit").await;
+        signed_edit(&source, &subject, "one").await;
+        signed_edit(&source, &subject, "two").await;
+        let all = envelopes(&source, subject.as_str());
+        assert_eq!(all.len(), 4);
+
+        // The receiver holds the resource, with its setting, before the
+        // envelopes arrive, as in a bulk push.
+        let sink = Db::init_temp("envelopes_import_audit_sink").await.unwrap();
+        let resource = source.get_resource(&subject).await.unwrap();
+        sink.add_resource(&resource).await.unwrap();
+        for e in &all {
+            import_envelope(&sink, subject.as_str(), &e.json)
+                .await
+                .unwrap();
+        }
+        assert_eq!(envelopes(&sink, subject.as_str()).len(), 4);
+    }
+
+    /// An ancestor the receiver does not hold yet may be the one asking for
+    /// audit, so nothing is pruned until the whole chain can be read.
+    #[tokio::test]
+    async fn import_before_the_parent_is_held_keeps_every_envelope() {
+        let source = Db::init_temp("envelopes_unknown_source").await.unwrap();
+        source.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = source.setup("Alice").await.unwrap();
+        let subject = child(&source, &drive).await;
+        signed_edit(&source, &subject, "one").await;
+        signed_edit(&source, &subject, "two").await;
+        let all = envelopes(&source, subject.as_str());
+        assert_eq!(all.len(), 3);
+
+        let sink = Db::init_temp("envelopes_unknown_sink").await.unwrap();
+        let resource = source.get_resource(&subject).await.unwrap();
+        sink.add_resource(&resource).await.unwrap();
+        for e in &all {
+            import_envelope(&sink, subject.as_str(), &e.json)
+                .await
+                .unwrap();
+        }
+        assert_eq!(envelopes(&sink, subject.as_str()).len(), 3);
     }
 
     #[tokio::test]
@@ -602,6 +1247,11 @@ mod tests {
         let newest = all.last().unwrap().clone();
 
         let latest_sink = Db::init_temp("envelopes_import_ret_latest").await.unwrap();
+        // The resource arrives before its envelopes, as in a bulk push.
+        for held in [&subject, &crate::Subject::from_raw(&drive, None)] {
+            let resource = source.get_resource(held).await.unwrap();
+            latest_sink.add_resource(&resource).await.unwrap();
+        }
         // Newest first, then older ones: the older must not displace it.
         for e in all.iter().rev() {
             import_envelope(&latest_sink, subject.as_str(), &e.json)
@@ -1024,6 +1674,47 @@ mod tests {
         assert_ne!(kept[0].json, written);
     }
 
+    /// A creation named by a genesis certificate (its id is not the commit
+    /// signature) keeps a one-byte tag row, not a second copy of the commit.
+    #[tokio::test]
+    async fn certificate_genesis_envelope_is_a_tag_row_read_from_the_commit_row() {
+        let db = Db::init_temp("envelopes_cert_genesis_tag").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        let rows = raw_rows(&db, &subject);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, vec![GENESIS_ROW]);
+        let kept = envelopes(&db, subject.as_str());
+        assert_eq!(kept.len(), 1);
+        let commit_row = db
+            .get_resource(&kept[0].commit_id().as_str().into())
+            .await
+            .unwrap();
+        assert_eq!(kept[0].json, commit_row.to_json_ad(None).unwrap());
+        assert_eq!(
+            db.get_resource(&subject)
+                .await
+                .unwrap()
+                .get(urls::NAME)
+                .unwrap()
+                .to_string(),
+            "Doc"
+        );
+
+        signed_edit(&db, &subject, "edited").await;
+        let kept = envelopes(&db, subject.as_str());
+        assert_eq!(kept.len(), 1, "the edit replaces the tag row");
+        assert_eq!(
+            db.get_resource(&subject)
+                .await
+                .unwrap()
+                .get(urls::NAME)
+                .unwrap()
+                .to_string(),
+            "edited"
+        );
+    }
+
     /// Under `all` the genesis envelope is history: the edit that follows
     /// writes it out so it stays beside the new one.
     #[tokio::test]
@@ -1048,5 +1739,524 @@ mod tests {
         let kept = envelopes(&db, subject.as_str());
         assert_eq!(kept.len(), 2, "genesis and the edit");
         assert_eq!(kept[0].json, written);
+    }
+
+    // ---- compact rows ----
+
+    /// The raw stored values of a resource's envelope rows, key order.
+    fn raw_rows(db: &Db, subject: &crate::Subject) -> Vec<(Vec<u8>, Vec<u8>)> {
+        db.kv
+            .scan_prefix(Tree::Envelopes, &prefix(subject.as_str()))
+            .map(|row| row.unwrap())
+            .collect()
+    }
+
+    fn is_compact(value: &[u8]) -> bool {
+        value.first() == Some(&COMPACT_V1)
+    }
+
+    /// A signed edit through `save_locally`; returns the commit JSON-AD as
+    /// signed.
+    async fn signed_edit_json(db: &Db, subject: &crate::Subject, name: &str) -> String {
+        let mut resource = db.get_resource(subject).await.unwrap();
+        resource
+            .set(urls::NAME.into(), Value::String(name.into()), db)
+            .await
+            .unwrap();
+        let response = resource.save_locally(db).await.unwrap();
+        response.commit_resource.to_json_ad(None).unwrap()
+    }
+
+    #[tokio::test]
+    async fn rust_path_edits_are_stored_compact_and_read_back_byte_identical() {
+        let db = Db::init_temp("envelopes_compact_rust").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        let mut written = Vec::new();
+        for name in ["one", "two", "three", "four"] {
+            written.push(signed_edit_json(&db, &subject, name).await);
+        }
+
+        let rows = raw_rows(&db, &subject);
+        let compact = rows.iter().filter(|(_, v)| is_compact(v)).count();
+        assert_eq!(compact, written.len(), "every edit is compact: {rows:?}");
+        let read = envelopes(&db, subject.as_str());
+        let read_edits: Vec<&str> = read
+            .iter()
+            .rev()
+            .take(written.len())
+            .rev()
+            .map(|e| e.json.as_str())
+            .collect();
+        assert_eq!(read_edits, written, "rebuilt JSON is what was signed");
+
+        let report = attribute_history(&db, subject.as_str()).await.unwrap();
+        assert!(report.attributions.iter().all(|a| a.verified), "{report:?}");
+        assert!(report.complete, "{report:?}");
+        assert_eq!(report.unreadable, 0);
+    }
+
+    #[tokio::test]
+    async fn browser_style_delta_is_stored_compact_and_verifies_after_rebuild() {
+        let db = Db::init_temp("envelopes_compact_delta").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        // Something earlier than the delta so the commit carries a
+        // `previousCommit`-free, single-peer range after the genesis.
+        signed_edit(&db, &subject, "before").await;
+
+        let resource = db.get_resource(&subject).await.unwrap();
+        let snapshot = resource.materialized_state().expect("stored state");
+        let base_vv = crate::loro::AtomicLoroDoc::from_snapshot(&snapshot)
+            .unwrap()
+            .oplog_vv();
+        let client_doc = crate::loro::AtomicLoroDoc::from_snapshot(&snapshot).unwrap();
+        client_doc
+            .set_property(urls::NAME, &Value::String("delta edit".into()))
+            .unwrap();
+        client_doc.commit_with_message("c-01test-compact-token");
+        let delta = client_doc.export_updates_since(&base_vv);
+        let mut builder = crate::commit::CommitBuilder::new(subject.clone());
+        builder.set_loro_update(delta);
+        let commit = builder.sign(&alice, &db, &resource).await.unwrap();
+        let json = commit
+            .into_resource(&db)
+            .await
+            .unwrap()
+            .to_json_ad(None)
+            .unwrap();
+        ingest_commit_json(&db, &json, &CommitIngestOpts::peer())
+            .await
+            .expect("the delta applies");
+
+        let rows = raw_rows(&db, &subject);
+        assert!(is_compact(&rows.last().unwrap().1), "the delta is compact");
+        let last = latest_envelope(&db, subject.as_str()).unwrap();
+        assert_eq!(last.json, json, "byte-identical to the signed commit");
+
+        // The rebuilt JSON verifies on its own, through the same path a
+        // receiving peer uses.
+        let resource = crate::parse::parse_json_ad_commit_resource(&last.json, &db)
+            .await
+            .unwrap();
+        let commit = crate::commit::Commit::from_resource(resource).unwrap();
+        commit
+            .validate_signature(&db)
+            .await
+            .expect("signature holds");
+
+        let report = attribute_history(&db, subject.as_str()).await.unwrap();
+        assert_eq!(
+            report.attributions.last().unwrap().tokens,
+            vec!["c-01test-compact-token".to_string()]
+        );
+        assert!(report.complete, "{report:?}");
+    }
+
+    #[tokio::test]
+    async fn a_legacy_json_row_still_reads() {
+        let db = Db::init_temp("envelopes_compact_legacy").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        let json = signed_edit_json(&db, &subject, "old era").await;
+        let (key, value) = raw_rows(&db, &subject).pop().unwrap();
+        assert!(is_compact(&value));
+
+        db.kv
+            .insert(Tree::Envelopes, &key, json.as_bytes())
+            .unwrap();
+        assert_eq!(latest_envelope(&db, subject.as_str()).unwrap().json, json);
+        let report = attribute_history(&db, subject.as_str()).await.unwrap();
+        assert!(report.complete, "{report:?}");
+        assert!(report.attributions.iter().all(|a| a.verified));
+    }
+
+    #[tokio::test]
+    async fn import_stores_compact_and_falls_back_to_json_when_the_rebuild_differs() {
+        let db = Db::init_temp("envelopes_compact_import").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        let json = signed_edit_json(&db, &subject, "imported").await;
+        let (key, _) = raw_rows(&db, &subject).pop().unwrap();
+
+        // The canonical bytes come back compact.
+        db.kv.remove(Tree::Envelopes, &key).unwrap();
+        import_envelope(&db, subject.as_str(), &json).await.unwrap();
+        let (new_key, value) = raw_rows(&db, &subject).pop().unwrap();
+        assert_eq!(new_key, key);
+        assert!(is_compact(&value), "import stores compact too");
+        assert_eq!(latest_envelope(&db, subject.as_str()).unwrap().json, json);
+
+        // The same commit pretty-printed is a valid envelope (the signature
+        // covers the canonical form) but differs byte for byte: kept whole.
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let respelled = serde_json::to_string_pretty(&value).unwrap();
+        assert_ne!(respelled, json);
+        db.kv.remove(Tree::Envelopes, &key).unwrap();
+        import_envelope(&db, subject.as_str(), &respelled)
+            .await
+            .unwrap();
+        let (_, value) = raw_rows(&db, &subject).pop().unwrap();
+        assert!(!is_compact(&value), "a different spelling is kept whole");
+        assert_eq!(value, respelled.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn a_genesis_snapshot_is_never_compact() {
+        let db = Db::init_temp("envelopes_compact_other").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        signed_edit(&db, &subject, "x").await;
+        let genesis = envelopes(&db, subject.as_str()).remove(0);
+        assert!(
+            compact_row(
+                &subject.pure_id(),
+                genesis.created_at,
+                &genesis.signature,
+                &genesis.json,
+            )
+            .is_none(),
+            "a genesis carries fields the compact row does not rebuild"
+        );
+    }
+
+    #[tokio::test]
+    async fn compact_rows_survive_the_loro_doc_being_rewritten_or_removed() {
+        let db = Db::init_temp("envelopes_compact_no_doc").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        let mut written = Vec::new();
+        // Same-peer commits merge into one Loro change in the oplog.
+        for name in ["a", "b", "c", "d"] {
+            written.push(signed_edit_json(&db, &subject, name).await);
+        }
+        db.kv
+            .remove(Tree::LoroSnapshots, subject.pure_id().as_bytes())
+            .unwrap();
+        let read: Vec<String> = envelopes(&db, subject.as_str())
+            .into_iter()
+            .rev()
+            .take(written.len())
+            .rev()
+            .map(|e| e.json)
+            .collect();
+        assert_eq!(read, written, "the proof does not depend on the doc");
+        assert_eq!(envelopes_checked(&db, subject.as_str()).unreadable, 0);
+    }
+
+    #[tokio::test]
+    async fn a_mixed_legacy_and_compact_tree_reads_in_order() {
+        let db = Db::init_temp("envelopes_compact_mixed").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        let mut written = Vec::new();
+        for name in ["one", "two", "three"] {
+            written.push(signed_edit_json(&db, &subject, name).await);
+        }
+        let rows = raw_rows(&db, &subject);
+        let middle = &rows[rows.len() - 2];
+        db.kv
+            .insert(Tree::Envelopes, &middle.0, written[1].as_bytes())
+            .unwrap();
+        let after = raw_rows(&db, &subject);
+        assert!(!is_compact(&after[after.len() - 2].1));
+        assert!(is_compact(&after[after.len() - 1].1));
+        let read: Vec<String> = envelopes(&db, subject.as_str())
+            .into_iter()
+            .rev()
+            .take(3)
+            .rev()
+            .map(|e| e.json)
+            .collect();
+        assert_eq!(read, written);
+        let report = attribute_history(&db, subject.as_str()).await.unwrap();
+        assert!(report.complete && report.unreadable == 0, "{report:?}");
+    }
+
+    #[tokio::test]
+    async fn history_of_a_destroyed_subject_still_reads() {
+        let db = Db::init_temp("envelopes_compact_destroy").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        signed_edit(&db, &subject, "before").await;
+        let resource = db.get_resource(&subject).await.unwrap();
+        let mut builder = crate::commit::CommitBuilder::new(subject.clone());
+        builder.destroy(true);
+        let commit = builder.sign(&alice, &db, &resource).await.unwrap();
+        let json = commit
+            .into_resource(&db)
+            .await
+            .unwrap()
+            .to_json_ad(None)
+            .unwrap();
+        ingest_commit_json(&db, &json, &CommitIngestOpts::peer())
+            .await
+            .unwrap();
+
+        let found = envelopes_checked(&db, subject.as_str());
+        assert_eq!(found.unreadable, 0);
+        assert!(found.rows.len() >= 2);
+        assert!(latest_envelope(&db, subject.as_str()).unwrap().is_destroy());
+        let report = attribute_history(&db, subject.as_str()).await.unwrap();
+        assert_eq!(report.unreadable, 0, "{report:?}");
+    }
+
+    #[tokio::test]
+    async fn a_subject_with_a_drive_hint_stays_readable_in_either_form() {
+        let db = Db::init_temp("envelopes_compact_hint").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        let json = signed_edit_json(&db, &subject, "hinted").await;
+        let (row_key, _) = raw_rows(&db, &subject).pop().unwrap();
+        let (_, created_at, signature) = parse_key(&row_key).unwrap();
+
+        let hinted = format!("{}?drive={drive}", subject.pure_id());
+        let mut map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&json).unwrap();
+        map.insert(urls::SUBJECT.into(), hinted.clone().into());
+        let hinted_json = serde_json::to_string(&map).unwrap();
+        // The row's subject is the pure id, so the hinted spelling is not
+        // rebuilt by the compact form and is stored whole.
+        let value = value_for(&hinted, created_at, &signature, hinted_json.clone());
+        assert_eq!(value, hinted_json.as_bytes());
+        db.kv.insert(Tree::Envelopes, &row_key, &value).unwrap();
+        assert_eq!(
+            latest_envelope(&db, subject.as_str()).unwrap().json,
+            hinted_json
+        );
+        // The plain spelling of the same commit compacts and reads back.
+        let value = value_for(subject.as_str(), created_at, &signature, json.clone());
+        assert!(is_compact(&value));
+        db.kv.insert(Tree::Envelopes, &row_key, &value).unwrap();
+        assert_eq!(latest_envelope(&db, subject.as_str()).unwrap().json, json);
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_row_is_reported_and_never_replaces_the_newest() {
+        let db = Db::init_temp("envelopes_compact_unreadable").await.unwrap();
+        db.set_envelope_retention(EnvelopeRetention::All);
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        signed_edit(&db, &subject, "x").await;
+        signed_edit(&db, &subject, "y").await;
+        let (newest_key, value) = raw_rows(&db, &subject).pop().unwrap();
+        assert!(is_compact(&value));
+        let before = attribute_history(&db, subject.as_str()).await.unwrap();
+        assert!(before.complete && before.unreadable == 0, "{before:?}");
+        let readable_before = envelopes_checked(&db, subject.as_str()).rows.len();
+
+        // A truncated compact row.
+        db.kv
+            .insert(Tree::Envelopes, &newest_key, &value[..10])
+            .unwrap();
+        let found = envelopes_checked(&db, subject.as_str());
+        assert_eq!(found.unreadable, 1);
+        assert!(found.newest_unreadable);
+        assert_eq!(found.rows.len(), readable_before - 1);
+        assert!(
+            latest_envelope(&db, subject.as_str()).is_none(),
+            "an older row is not the latest"
+        );
+        let after = attribute_history(&db, subject.as_str()).await.unwrap();
+        assert_eq!(after.unreadable, 1);
+        assert!(!after.complete);
+
+        // Latest retention: a local write and an import both leave the
+        // unreadable newest row in place.
+        db.set_envelope_retention(EnvelopeRetention::Latest);
+        let json = signed_edit_json(&db, &subject, "z").await;
+        assert!(
+            raw_rows(&db, &subject)
+                .iter()
+                .any(|(k, _)| *k == newest_key),
+            "the unreadable row was not pruned"
+        );
+        let (new_key, _) = raw_rows(&db, &subject).pop().unwrap();
+        db.kv.remove(Tree::Envelopes, &new_key).unwrap();
+        import_envelope(&db, subject.as_str(), &json).await.unwrap();
+        assert!(raw_rows(&db, &subject)
+            .iter()
+            .any(|(k, _)| *k == newest_key));
+    }
+
+    /// Changes in a resource's stored Loro doc with no commit token: what a
+    /// node writes on its own on top of the signed commits.
+    fn untokened_changes(db: &Db, subject: &crate::Subject) -> usize {
+        let doc =
+            crate::loro::AtomicLoroDoc::from_snapshot(&db.get_loro_snapshot(subject).unwrap())
+                .unwrap();
+        let mut untokened = 0;
+        doc.doc()
+            .travel_change_ancestors(
+                &doc.doc().oplog_frontiers().iter().collect::<Vec<_>>(),
+                &mut |change| {
+                    if change.message.as_deref().is_none_or(str::is_empty) {
+                        untokened += 1;
+                    }
+                    std::ops::ControlFlow::Continue(())
+                },
+            )
+            .unwrap();
+        untokened
+    }
+
+    fn doc_stamp(db: &Db, subject: &crate::Subject) -> Option<loro::LoroValue> {
+        crate::loro::AtomicLoroDoc::from_snapshot(&db.get_loro_snapshot(subject).unwrap())
+            .unwrap()
+            .get_all_properties()
+            .get(urls::LAST_COMMIT)
+            .cloned()
+    }
+
+    /// `lastCommit` is served from the newest envelope and is not a change in
+    /// the document: a commit adds exactly the author's change to the oplog.
+    #[tokio::test]
+    async fn last_commit_is_derived_and_adds_nothing_to_the_oplog() {
+        let db = Db::init_temp("envelopes_derived_last_commit")
+            .await
+            .unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+
+        let size = |db: &Db| db.get_loro_snapshot(&subject).unwrap().len();
+        let (changes_before, bytes_before) = (
+            crate::loro::AtomicLoroDoc::from_snapshot(&db.get_loro_snapshot(&subject).unwrap())
+                .unwrap()
+                .doc()
+                .len_changes(),
+            size(&db),
+        );
+        signed_edit(&db, &subject, "one").await;
+        let doc =
+            crate::loro::AtomicLoroDoc::from_snapshot(&db.get_loro_snapshot(&subject).unwrap())
+                .unwrap();
+        println!(
+            "OPLOG one small edit: snapshot {bytes_before} B -> {} B, changes {changes_before} -> {}",
+            size(&db),
+            doc.doc().len_changes()
+        );
+        assert_eq!(
+            doc.doc().len_changes(),
+            changes_before + 1,
+            "one commit, one change: no server-peer bookkeeping"
+        );
+        assert!(
+            doc_stamp(&db, &subject).is_none(),
+            "nothing is stamped in the doc"
+        );
+
+        let latest = latest_envelope(&db, subject.as_str()).unwrap();
+        let served = db.get_resource(&subject).await.unwrap();
+        assert_eq!(
+            served.get(urls::LAST_COMMIT).unwrap().to_string(),
+            latest.commit_id()
+        );
+        assert_eq!(
+            latest_commit_id(&db, subject.as_str()).as_deref(),
+            Some(latest.commit_id().as_str())
+        );
+        // The shallow read (the stored row) serves it too.
+        assert_eq!(
+            db.get_resource_shallow(&subject)
+                .unwrap()
+                .get(urls::LAST_COMMIT)
+                .unwrap()
+                .to_string(),
+            latest.commit_id()
+        );
+        assert_eq!(untokened_changes(&db, &subject), 0);
+    }
+
+    /// A row written from a synced doc carries no `lastCommit`: the newest
+    /// envelope is served, then the genesis commit.
+    #[tokio::test]
+    async fn last_commit_falls_back_to_the_envelope_when_the_row_has_none() {
+        let db = Db::init_temp("envelopes_last_commit_fallback")
+            .await
+            .unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        signed_edit(&db, &subject, "one").await;
+        let latest = latest_envelope(&db, subject.as_str()).unwrap();
+
+        let mut stripped = db.get_resource(&subject).await.unwrap();
+        stripped.remove_propval(urls::LAST_COMMIT).unwrap();
+        db.add_resource_opts(&stripped, false, true, true)
+            .await
+            .unwrap();
+        assert!(db
+            .get_resource_shallow(&subject)
+            .unwrap()
+            .get(urls::LAST_COMMIT)
+            .is_err());
+        assert_eq!(
+            db.get_resource(&subject)
+                .await
+                .unwrap()
+                .get(urls::LAST_COMMIT)
+                .unwrap()
+                .to_string(),
+            latest.commit_id()
+        );
+    }
+
+    /// A doc that still holds the old stamp: the derived value wins, and the
+    /// stamp stands when nothing derived exists.
+    #[tokio::test]
+    async fn a_stamp_in_an_old_doc_loses_to_the_derived_value() {
+        let db = Db::init_temp("envelopes_old_stamp").await.unwrap();
+        let (_alice, drive) = db.setup("Alice").await.unwrap();
+        let subject = child(&db, &drive).await;
+        signed_edit(&db, &subject, "one").await;
+        let latest = latest_envelope(&db, subject.as_str()).unwrap();
+
+        let old = "atomic:commit:OLDSTAMP";
+        let doc =
+            crate::loro::AtomicLoroDoc::from_snapshot(&db.get_loro_snapshot(&subject).unwrap())
+                .unwrap();
+        doc.set_property(urls::LAST_COMMIT, &Value::AtomicUrl(old.into()))
+            .unwrap();
+        let mut resource = db.get_resource(&subject).await.unwrap();
+        resource.apply_state_doc(doc).unwrap();
+        assert_eq!(resource.get(urls::LAST_COMMIT).unwrap().to_string(), old);
+        db.add_resource_opts(&resource, false, true, true)
+            .await
+            .unwrap();
+        assert!(
+            doc_stamp(&db, &subject).is_some(),
+            "premise: the stored doc holds the stamp"
+        );
+
+        // The row now says `old` too (it was written from the stamped doc);
+        // the next signed commit derives a fresh value over it.
+        signed_edit(&db, &subject, "two").await;
+        let newest = latest_envelope(&db, subject.as_str()).unwrap();
+        assert_ne!(newest.commit_id(), latest.commit_id());
+        assert_eq!(
+            db.get_resource(&subject)
+                .await
+                .unwrap()
+                .get(urls::LAST_COMMIT)
+                .unwrap()
+                .to_string(),
+            newest.commit_id(),
+            "the derived value wins over the doc's stamp"
+        );
+
+        // Without a row value, the stamp the doc holds stands over a
+        // missing envelope.
+        let mut stamped = resource;
+        stamped.set_derived_last_commit(Value::AtomicUrl(old.into()));
+        db.serve_derived_last_commit(&mut stamped, "internal:/no-envelopes", None);
+        assert_eq!(stamped.get(urls::LAST_COMMIT).unwrap().to_string(), old);
     }
 }

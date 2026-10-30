@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/atomic-cli)](https://crates.io/crates/atomic-cli)
 [![Discord chat](https://img.shields.io/discord/723588174747533393.svg?logo=discord)](https://discord.gg/a72Rv2P)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![github](https://img.shields.io/github/stars/atomicdata-dev/atomic-server?style=social)](https://github.com/joepio/aget_basetomic)
+[![github](https://img.shields.io/github/stars/ontola/atomic-server?style=social)](https://github.com/ontola/atomic-server)
 
 _Status: Beta. [Breaking changes](../CHANGELOG.md) are expected until 1.0._
 
@@ -49,7 +49,7 @@ cargo install atomic-cli
 ### Build from source
 
 ```sh
-git clone git@github.com:atomicdata-dev/atomic-server.git
+git clone git@github.com:ontola/atomic-server.git
 cd atomic/cli
 # Install atomic to path
 cargo install --path ./
@@ -60,7 +60,7 @@ cargo install --path ./
 Run `atomic-cli command --help` for mor information about specific commands.
 
 The write commands (`set`, `remove`, `edit`, `destroy`) require some authentication config, which needs to match with the target [atomic-server](https://crates.io/crates/atomic-server).
-It will read the `~/.config/atomic/config.toml` file, and create one using some prompts if it is not yet present.
+It reads the `~/.config/atomic/config.toml` file. Create one with `atomic-cli connect --server https://your-server`: it makes a key on this machine and prints a link to your Atomic app, where you pick which drives it may reach and whether it may edit, and click Allow. Your own agent secret is never needed, and you can revoke the key under Connected apps in your account settings.
 
 ## Features
 

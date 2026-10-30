@@ -76,6 +76,7 @@ import { useRowActions } from './useRowActions';
 import { rowActionKey, type RowActionSpec } from './rowActions';
 import { QuickAddBar } from './QuickAddBar';
 import { useTableAggregates } from './useTableAggregates';
+import { getTableDrive } from './tableDrive';
 import { TableTotalsFooter } from './TableTotalsFooter';
 import { toAggregation } from './tableAggregates';
 import { stringToSlug } from '@helpers/stringToSlug';
@@ -561,7 +562,7 @@ export const TableResource: React.FC<TableResourceProps> = ({
     filters: queryFilters,
     expressionFilters: queryExpressionFilters,
     aggregation,
-    drive: store.getDrive(),
+    drive: getTableDrive(store, resource) ?? store.getDrive(),
     server: resource.subject.startsWith('http')
       ? new URL(resource.subject).origin
       : undefined,
@@ -1028,9 +1029,10 @@ export const TableResource: React.FC<TableResourceProps> = ({
         await row.save();
         store.notifyResourceManuallyCreated(row);
         incrementMemberCount();
-        // Refresh so the server-authoritative order (and the new member's
-        // position at index + 1) lands promptly.
-        await invalidateCollection();
+        // No refresh here: `notifyResourceManuallyCreated` already put the row
+        // in the collection at its sort position, index + 1. A refresh clears
+        // the pages and re-reads them, and the grid redraws under the cursor
+        // while the person is typing into the row they just inserted.
       };
 
       insert().catch(error => {
@@ -1052,7 +1054,6 @@ export const TableResource: React.FC<TableResourceProps> = ({
       resource.subject,
       tableClass.subject,
       incrementMemberCount,
-      invalidateCollection,
     ],
   );
 
@@ -1302,6 +1303,7 @@ export const TableResource: React.FC<TableResourceProps> = ({
       aggregateOutcomes,
       // The rows on screen: under the quick filter, the ones that match.
       rowCount: rowCollection.totalMembers,
+      rowsLoading: !ready,
       setColumnAggregate,
       removeAggregateRow,
       canWriteTable: canWrite,
@@ -1313,6 +1315,7 @@ export const TableResource: React.FC<TableResourceProps> = ({
       removeDerivedColumn,
       addItemsToHistoryStack,
       rowSource,
+      viewKind,
     }),
     [
       selectedRows,
@@ -1336,6 +1339,7 @@ export const TableResource: React.FC<TableResourceProps> = ({
       viewAggregates,
       aggregateOutcomes,
       rowCollection.totalMembers,
+      ready,
       setColumnAggregate,
       removeAggregateRow,
       canWrite,
@@ -1347,6 +1351,7 @@ export const TableResource: React.FC<TableResourceProps> = ({
       removeDerivedColumn,
       addItemsToHistoryStack,
       rowSource,
+      viewKind,
     ],
   );
 
@@ -1549,6 +1554,7 @@ export const TableResource: React.FC<TableResourceProps> = ({
           {!embedded && (
             <TableFilterBar
               columns={uniqueColumnProperties}
+              allColumns={allColumns}
               derivedColumns={derivedSpecs}
             />
           )}
@@ -1641,6 +1647,7 @@ export const TableResource: React.FC<TableResourceProps> = ({
               )}
               <FancyTable
                 readOnly={!canWrite}
+                busy={!ready}
                 columns={gridColumns}
                 columnSizes={gridColumnSizes}
                 // The session's empty entry row is local state: it needs

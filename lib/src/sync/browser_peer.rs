@@ -54,7 +54,16 @@ impl BrowserPeerSession {
             })
     }
 
-    async fn candidate(&self, db: &Db, subject: &str, bytes: &[u8]) -> AtomicResult<Resource> {
+    /// The resource [bytes] would make of [subject], checked to stay in this
+    /// drive. `None` when this device keeps [subject] in another drive: the
+    /// two replicas disagree about it, so it is left out and the rest of the
+    /// drive still syncs.
+    async fn candidate(
+        &self,
+        db: &Db,
+        subject: &str,
+        bytes: &[u8],
+    ) -> AtomicResult<Option<Resource>> {
         if subject.contains(['#', '?']) {
             return Err("Noncanonical peer subject".into());
         }
@@ -65,7 +74,11 @@ impl BrowserPeerSession {
         let subject = parsed.pure_id();
         if let Ok(existing) = db.get_resource(&subject.as_str().into()).await {
             if !self.in_drive(&existing) {
-                return Err("Peer frame targets another drive".into());
+                tracing::warn!(
+                    "[browser_peer] skipping {subject}: kept in another drive than {}",
+                    self.drive
+                );
+                return Ok(None);
             }
         }
         let doc = match db.get_loro_snapshot_bytes(&subject) {
@@ -78,7 +91,7 @@ impl BrowserPeerSession {
         if !self.in_drive(&resource) {
             return Err("Peer frame moves data outside its drive".into());
         }
-        Ok(resource)
+        Ok(Some(resource))
     }
 
     pub async fn can_send(&self, db: &Db, subject: &str) -> bool {
@@ -167,19 +180,13 @@ impl BrowserPeerSession {
                         {
                             continue;
                         }
-                        if let Ok(blob) = resource.get(crate::urls::BLOB) {
-                            if let Some(hash) = Subject::from(blob.to_string())
-                                .blob_hash_hex()
-                                .and_then(|hex| hex::decode(hex).ok())
-                                .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-                            {
-                                if !db.has_blob(&hash).await? {
-                                    self.pending_blobs.insert(hash);
-                                    out.frames.push(protocol::encode_blob_request(&hash));
-                                    requested += 1;
-                                    if requested >= 32 {
-                                        break;
-                                    }
+                        if let Some(hash) = resource.blob_hash() {
+                            if !db.has_blob(&hash).await? {
+                                self.pending_blobs.insert(hash);
+                                out.frames.push(protocol::encode_blob_request(&hash));
+                                requested += 1;
+                                if requested >= 32 {
+                                    break;
                                 }
                             }
                         }
@@ -192,6 +199,7 @@ impl BrowserPeerSession {
                     return Err("Wrong push drive".into());
                 }
                 // Preflight the entire batch before the shared importer writes.
+                let mut skipped = std::collections::HashSet::new();
                 for entry in &push.entries {
                     // Other mesh edges may still be sending a delta when a
                     // signed deletion lands. The shared importer ignores it;
@@ -199,14 +207,23 @@ impl BrowserPeerSession {
                     if super::tombstones::is_tombstoned(db, &entry.subject) {
                         continue;
                     }
-                    let candidate = self
+                    let Some(candidate) = self
                         .candidate(db, &entry.subject, &entry.loro_bytes)
-                        .await?;
+                        .await?
+                    else {
+                        skipped.insert(entry.subject.clone());
+                        continue;
+                    };
                     if entry.subject == self.drive
                         && db.get_resource(&self.drive.as_str().into()).await.is_err()
                     {
                         crate::hierarchy::check_write(db, &candidate, &self.agent).await?;
                     }
+                }
+                let mut push = push;
+                if !skipped.is_empty() {
+                    push.entries.retain(|e| !skipped.contains(&e.subject));
+                    push.envelopes.retain(|e| !skipped.contains(&e.subject));
                 }
                 let (_, requests) = engine::import_sync_push(&push, db, &self.agent, false)
                     .await
@@ -251,7 +268,11 @@ impl BrowserPeerSession {
                     }
                     let resource = db.get_resource(&subject.as_str().into()).await?;
                     if !self.in_drive(&resource) {
-                        return Err("Peer requested another drive".into());
+                        tracing::warn!(
+                            "[browser_peer] not sending {subject}: kept in another drive than {}",
+                            self.drive
+                        );
+                        continue;
                     }
                     crate::hierarchy::check_read(db, &resource, &self.agent).await?;
                     if let Some(bytes) = db.get_loro_snapshot_bytes(subject) {
@@ -288,16 +309,13 @@ impl BrowserPeerSession {
                 let mut permitted = false;
                 for subject in subjects {
                     let resource = db.get_resource(&subject.as_str().into()).await?;
-                    if let Ok(blob) = resource.get(crate::urls::BLOB) {
-                        if Subject::from(blob.to_string()).blob_hash_hex()
-                            == Some(hex::encode(hash).as_str())
-                            && crate::hierarchy::check_read(db, &resource, &self.agent)
-                                .await
-                                .is_ok()
-                        {
-                            permitted = true;
-                            break;
-                        }
+                    if resource.blob_hash() == Some(hash)
+                        && crate::hierarchy::check_read(db, &resource, &self.agent)
+                            .await
+                            .is_ok()
+                    {
+                        permitted = true;
+                        break;
                     }
                 }
                 if !permitted {
@@ -387,9 +405,20 @@ impl BrowserPeerSession {
             )?;
             self.candidate(db, subject, &bytes).await?;
         }
-        engine::ingest_commit_json(db, json, &engine::CommitIngestOpts::peer()).await?;
-        out.changed.push(subject.into());
-        Ok(())
+        let is_destroy = value[crate::urls::DESTROY].as_bool() == Some(true);
+        match engine::ingest_commit_json(db, json, &engine::CommitIngestOpts::peer()).await {
+            // Reconcile re-sends a signed tombstone for a subject that was
+            // destroyed and then re-created. The core refuses that replay,
+            // which is right, but failing the session makes the link redial
+            // and get the same stale destroy again, forever. The resource is
+            // alive and unchanged here, so the replay is a settled no-op.
+            Err(err) if is_destroy && err.to_string().contains("refusing replay") => Ok(()),
+            result => {
+                result?;
+                out.changed.push(subject.into());
+                Ok(())
+            }
+        }
     }
 }
 
@@ -445,18 +474,33 @@ mod tests {
         assert!(session.handle(&db, &auth).await.is_err());
     }
     #[tokio::test]
-    async fn refuses_cross_drive_snapshot_before_writing() {
+    async fn skips_a_subject_kept_in_another_drive_without_writing() {
         let (db, agent, drive, mut session) = fixture().await;
         authenticate(&db, &agent, &mut session).await;
         let foreign = db.create_drive("Other").await.unwrap();
-        let bytes = db
+        let before = db
             .kv
             .get(Tree::LoroSnapshots, foreign.as_bytes())
             .unwrap()
             .unwrap();
+        // The peer claims the other drive's resource for this drive.
+        let doc = AtomicLoroDoc::from_snapshot(&before).unwrap();
+        doc.set_property(crate::urls::NAME, &crate::Value::String("Taken".into()))
+            .unwrap();
+        let bytes = doc.export_snapshot();
         let frames =
             protocol::encode_sync_push_chunks(&drive, &[(foreign.as_str(), bytes.as_slice())]);
-        assert!(session.handle(&db, &frames[0]).await.is_err());
+        // Left out, and the rest of the drive keeps syncing.
+        let output = session.handle(&db, &frames[0]).await.unwrap();
+        assert_eq!(output.frames.last().unwrap()[0], protocol::tag::SYNC_OK);
+        assert_eq!(
+            db.kv
+                .get(Tree::LoroSnapshots, foreign.as_bytes())
+                .unwrap()
+                .unwrap(),
+            before
+        );
+        assert!(!session.closed);
     }
     #[tokio::test]
     async fn accepts_authenticated_same_drive_snapshot() {
@@ -608,6 +652,39 @@ mod tests {
             &Default::default(),
         );
         assert!(session.handle(&db, &unknown).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn replayed_destroy_of_a_recreated_subject_does_not_fail_the_session() {
+        let (db, agent, drive, mut session) = fixture().await;
+        authenticate(&db, &agent, &mut session).await;
+        let subject = crate::Subject::from_raw(&drive, None);
+        let resource = db.get_resource(&subject).await.unwrap();
+        let mut builder = crate::commit::CommitBuilder::new(subject.clone());
+        builder.destroy(true);
+        let json = builder
+            .sign(&agent, &db, &resource)
+            .await
+            .unwrap()
+            .into_resource(&db)
+            .await
+            .unwrap()
+            .to_json_ad(None)
+            .unwrap();
+        let frame = protocol::encode_commit(1, &json);
+
+        let first = session.handle(&db, &frame).await.unwrap();
+        assert_eq!(first.changed, vec![drive.clone()]);
+        assert!(db.get_resource(&subject).await.is_err());
+
+        // The private drive has a deterministic subject, so a repeat genesis
+        // brings back the very same subject after its destroy.
+        db.ensure_private_drive().await.unwrap();
+        assert!(db.get_resource(&subject).await.is_ok());
+
+        let replay = session.handle(&db, &frame).await.unwrap();
+        assert!(replay.changed.is_empty());
+        assert!(db.get_resource(&subject).await.is_ok());
     }
 
     #[tokio::test]

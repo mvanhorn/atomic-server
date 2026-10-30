@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
 import { Datatype, type JSONValue, type Property } from '@tomic/react';
 import {
   aggregateRows,
@@ -11,6 +11,9 @@ import {
   toAggregation,
   BREAKDOWN_ROWS_ID,
 } from './tableAggregates';
+import { useRealFormulaEngine } from './formulaEngine.testing';
+
+beforeAll(useRealFormulaEngine);
 
 const property = (datatype: Datatype, shortname = 'x'): Property =>
   ({
@@ -99,8 +102,9 @@ describe('toAggregation', () => {
     const duration = {
       id: 'duration',
       label: 'Duration',
-      kind: 'elapsed' as const,
-      args: { from: START.subject, until: 'https://example.com/end' },
+      formula: 'coalesce(end, now()) - start',
+      vars: { start: START.subject, end: 'https://example.com/end' },
+      valueKind: 'duration' as const,
     };
     const sumDuration = {
       id: 'sum-duration-0',
@@ -118,9 +122,9 @@ describe('toAggregation', () => {
           id: 'sum-duration-0',
           function: 'sum',
           expression: {
-            kind: 'elapsed',
-            from: START.subject,
-            until: 'https://example.com/end',
+            kind: 'formula',
+            formula: 'coalesce(end, now()) - start',
+            vars: { start: START.subject, end: 'https://example.com/end' },
           },
         },
       ]);
@@ -142,8 +146,8 @@ describe('toAggregation', () => {
       const total = {
         id: 'total',
         label: 'Total',
-        kind: 'product' as const,
-        args: { a: AMOUNT.subject, b: 2 },
+        formula: 'amount * 2',
+        vars: { amount: AMOUNT.subject },
       };
       const aggregation = toAggregation(
         [{ id: 'sum-total-0', derived: 'total', function: 'sum' }],
@@ -164,7 +168,7 @@ describe('toAggregation', () => {
     });
 
     it('asks for nothing when the column is still incomplete', () => {
-      const halfBuilt = { ...duration, args: { from: '' } };
+      const halfBuilt = { ...duration, formula: '' };
 
       expect(
         toAggregation([sumDuration], undefined, 'day', [halfBuilt]),
@@ -275,7 +279,11 @@ describe('aggregateRows', () => {
           { id: 'latest', property: DUE, function: 'max' },
           {
             id: 'amount',
-            expression: { kind: 'product', a: Q, b: P },
+            expression: {
+              kind: 'formula',
+              formula: 'q * p',
+              vars: { q: Q, p: P },
+            },
             function: 'sum',
           },
         ],
@@ -321,5 +329,13 @@ describe('aggregateRows', () => {
       { key: '2026-07', value: 2, count: 2 },
       { key: '2026-08', value: 1, count: 1 },
     ]);
+  });
+});
+
+describe('formatAggregateValue for an empty answer', () => {
+  it('reads a count over no rows as 0, but not a sum, and not an unanswered one', () => {
+    expect(formatAggregateValue(null, 'count', undefined)).toBe('0');
+    expect(formatAggregateValue(null, 'sum', undefined)).toBe('—');
+    expect(formatAggregateValue(undefined, 'count', undefined)).toBe('—');
   });
 });

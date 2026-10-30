@@ -1,13 +1,23 @@
-import { conversations, useStore, type Store } from '@tomic/react';
-import { useEffect, useState } from 'react';
+import {
+  conversations,
+  useResources,
+  useStore,
+  type Store,
+} from '@tomic/react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSettings } from '../AppSettings';
 import { usePrivateDriveList } from '../../hooks/usePrivateDriveList';
 import { useNavigateWithTransition } from '../../hooks/useNavigateWithTransition';
 import { constructOpenURL } from '../navigation';
 import { fetchPrivateDriveSubject } from '../privateDrive';
+import {
+  unhideConversation,
+  useHiddenConversations,
+  withoutHidden,
+} from './hiddenConversations';
 import { hasMembers, startConversation } from './conversations';
-
-const CONVERSATIONS_PATH = '/conversations';
+import { fetchMemberOf } from './conversationsEndpoint';
+import { dedupeByMembers } from './conversationMembers';
 
 /** How often the Messages panel asks the server for conversations someone
  *  else started. Nothing pushes them yet; see `planning/notifications.md`. */
@@ -23,6 +33,7 @@ export function useConversations(): string[] {
   const { agent } = useSettings();
   const [listed] = usePrivateDriveList(conversations.properties.conversations);
   const [fromServer, setFromServer] = useState<string[]>([]);
+  const hidden = useHiddenConversations(agent?.subject);
 
   useEffect(() => {
     if (!agent?.subject) return;
@@ -36,31 +47,25 @@ export function useConversations(): string[] {
     refresh();
     const timer = setInterval(refresh, REFRESH_MS);
     window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
 
     return () => {
       cancelled = true;
       clearInterval(timer);
       window.removeEventListener('focus', refresh);
+      window.removeEventListener('online', refresh);
     };
   }, [store, agent]);
 
-  return agent?.subject ? [...new Set([...listed, ...fromServer])] : listed;
-}
+  const all = useMemo(
+    () => (agent?.subject ? [...new Set([...listed, ...fromServer])] : listed),
+    [agent?.subject, listed, fromServer],
+  );
+  const resources = useResources(all);
 
-/** The conversations on this server the signed-in agent is a member of.
- *  Empty when the server can't say, such as one without the endpoint. */
-async function fetchMemberOf(store: Store): Promise<string[]> {
-  try {
-    // Always from the server: a cached answer predates new conversations.
-    const endpoint = await store.fetchResourceFromServer(
-      `${store.getServerUrl()}${CONVERSATIONS_PATH}`,
-    );
-    const found = endpoint.get(conversations.properties.conversations);
-
-    return Array.isArray(found) ? (found as string[]) : [];
-  } catch {
-    return [];
-  }
+  // Two conversations with the same people show as one. Collapsing comes
+  // before hiding, so leaving the kept one hides its twins too.
+  return withoutHidden(dedupeByMembers(all, resources).subjects, hidden);
 }
 
 /**
@@ -97,6 +102,9 @@ export async function findOrStartConversation(
     candidate => !candidate.error && hasMembers(candidate, members),
   );
   const conversation = existing ?? (await startConversation(store, others));
+
+  // Opening it again brings back a conversation that was left.
+  unhideConversation(agent.subject, conversation.subject);
 
   if (privateDrive && !listed.includes(conversation.subject)) {
     privateDrive.push(

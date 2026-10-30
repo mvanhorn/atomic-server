@@ -76,6 +76,20 @@ pub mod tag {
     /// probe itself was the text `SYNC_VV`; both transports now speak the
     /// binary form.
     pub const SYNC_RESEND: u8 = 0x38;
+    /// Iroh only, dialer → responder: run an app export on the responder's
+    /// node. `[0x50] [request_id: u16] [json CallRequest]`. Answered by
+    /// `CALL_RESULT` (or `ERROR` when it cannot be read). See [`super::CallRequest`].
+    pub const CALL: u8 = 0x50;
+    /// Responder → dialer: `[0x51] [request_id: u16] [json CallResponse]`.
+    pub const CALL_RESULT: u8 = 0x51;
+    /// Iroh only, invitee → inviter's device: redeem a signed invite token.
+    /// `[0x52] [json {"token": "<base64 token>"}]`, after an `AUTH` for the
+    /// token's target drive. Answered by `INVITE_OK` or `ERROR`
+    /// (`error_code::INVITE_REFUSED`). See `sync::invite`.
+    pub const INVITE: u8 = 0x52;
+    /// Responder → invitee: `[0x53] [json {"drive": "...", "write": bool}]`,
+    /// after the rights were granted to the `AUTH`-ed agent.
+    pub const INVITE_OK: u8 = 0x53;
 }
 
 /// Feature names a responder advertises in the `AUTH_OK` payload and both
@@ -111,6 +125,9 @@ pub mod tag {
 ///   frames `LORO_SYNC_UPDATE` / `LORO_EPHEMERAL_UPDATE` / `PRESENCE_UPDATE`.
 /// - `get-many`: answers `GET_MANY` (0x15) with one `GET_MANY_RESULT` (0x16),
 ///   so a client can fetch a whole list of subjects in one round trip.
+/// - `commit-pace`: appends a write-load hint to the slim `COMMIT_OK` of a
+///   client whose `HELLO` lists `commit-pace` (see [`encode_commit_ok_paced`])
+///   and may refuse commits with `error_code::BUSY` when overloaded.
 pub const CAPABILITIES: &[&str] = &[
     "auth-max-age",
     "keepalive",
@@ -126,7 +143,12 @@ pub const CAPABILITIES: &[&str] = &[
     "get-many",
     "canonical-scheme",
     "sparse-sync",
+    "commit-pace",
 ];
+
+/// Server capability: answers a hash-first `SYNC` probe (`probe: true`) with
+/// `SYNC_OK` or `SYNC_RESEND`.
+pub const CAP_SYNC_PROBE: &str = "sync-probe";
 
 /// Server capability: understands a `SYNC` whose JSON carries `hv: 2` and, in
 /// place of `peers` and `resources`, `vvs` (`subject -> peer -> counter`). The
@@ -141,7 +163,14 @@ pub const CAP_SPARSE_SYNC: &str = "sparse-sync";
 /// - `commit-ok-slim`: the client decodes a `COMMIT_OK` whose payload is a
 ///   bare commit id, so the responder need not ship the full commit JSON
 ///   back to the agent that just signed it.
-pub const CLIENT_CAPABILITIES: &[&str] = &["commit-ok-slim", "canonical-scheme"];
+/// - `commit-pace`: the client decodes the `pace_ms` suffix of a slim
+///   `COMMIT_OK` (needs `commit-ok-slim` too) and understands
+///   `error_code::BUSY`.
+pub const CLIENT_CAPABILITIES: &[&str] = &["commit-ok-slim", "canonical-scheme", "commit-pace"];
+
+/// The client capability a responder consults before appending `pace_ms` to a
+/// slim `COMMIT_OK`.
+pub const CAP_COMMIT_PACE: &str = "commit-pace";
 
 /// The name of the client capability a responder consults before sending a
 /// slim `COMMIT_OK`.
@@ -281,6 +310,32 @@ pub mod error_code {
     /// A new Loro write lost against stored state. Preserve the local edit,
     /// but stop sending the same stale update until it is rebased.
     pub const CAUSALITY_CONFLICT: u16 = 11;
+    /// The node is overloaded with writes (in-flight commits above its hard
+    /// limit) or this agent spent its write rate budget. The commit was
+    /// refused **before** any work was done and nothing landed. Not a failure
+    /// of the commit: keep the local state, wait `retry_after_ms=<n>` (see
+    /// [`retry_after_ms_from_message`](super::retry_after_ms_from_message)),
+    /// then send one merged delta. Do not count it as a failed attempt and
+    /// do not retry it over another transport. A client that predates this
+    /// code sees an unknown code and retries generically.
+    pub const BUSY: u16 = 12;
+    /// An `INVITE` was refused (expired, not signed by this node's agent, the
+    /// signer may no longer share the drive, ...). The message is a plain
+    /// sentence for the person. Nothing was granted.
+    pub const INVITE_REFUSED: u16 = 13;
+}
+
+/// Pull the `retry_after_ms=<n>` hint out of a `BUSY` error message (or an
+/// HTTP error description). `None` when the message carries none.
+pub fn retry_after_ms_from_message(message: &str) -> Option<u64> {
+    let rest = &message[message.find("retry_after_ms=")? + "retry_after_ms=".len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// The message text of a `BUSY` refusal for a retry delay in milliseconds.
+pub fn busy_message(retry_after_ms: u64) -> String {
+    format!("Server busy; retry_after_ms={retry_after_ms}")
 }
 
 /// Decode the payload of an `ERROR` frame (slice *after* the tag byte):
@@ -314,6 +369,13 @@ pub struct DecodedError {
 /// `isTerminalCommitErrorMessage` / `isUnrecoverableCommitErrorMessage`
 /// patterns — update both sides together if you add a case.
 pub fn classify_commit_error(message: &str) -> u16 {
+    // Load shedding and the write rate limiter both mean "wait, then resend".
+    if message.starts_with("Server busy; retry_after_ms=")
+        || message.starts_with("Too many writes; retry after ")
+    {
+        return error_code::BUSY;
+    }
+
     // A stale Loro write cannot win by resending the same update. Preserve it
     // client-side for review/rebase instead of retrying indefinitely.
     if message.contains("Commit's Loro update produced no state changes") {
@@ -418,6 +480,143 @@ pub const IROH_FRAME_MAX_BYTES: usize = 50_000_000;
 /// (planning/unified-sync.md) — can't force a 50MB allocation before proving
 /// who they are.
 pub const IROH_PREAUTH_FRAME_MAX_BYTES: usize = 10_000_000;
+
+// ---- Host ABI calls between nodes (CALL / CALL_RESULT) ----
+
+/// What a forwarded call may still spend, carried in the `CALL` frame. The
+/// responder never widens it: counts are capped at its own chain limits,
+/// effects it does not know are dropped, and `secrets: false` stays false.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallBudgetWire {
+    /// `calls.call` hops still allowed.
+    pub calls: u64,
+    pub fuel: u64,
+    /// The effects any export in the chain may have; `None` is any.
+    #[serde(default)]
+    pub effects: Option<Vec<String>>,
+    /// Whether an app that declares secrets may run anywhere in the chain.
+    pub secrets: bool,
+}
+
+/// `CALL` payload: `calls.call(interface, function, args)` in `drive`, for
+/// `caller`, with the rest of the chain's budget.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallRequest {
+    pub drive: String,
+    pub interface: String,
+    pub function: String,
+    /// The arguments, JSON text.
+    pub args: String,
+    /// The agent the entry call came from. The dialer vouches for it: the
+    /// connection's AUTH is the dialer's own agent, not this one.
+    pub caller: String,
+    /// `calls.call` hops so far, this hop included.
+    pub depth: u32,
+    pub budget: CallBudgetWire,
+}
+
+/// An ABI error (`code` is one of `atomic:host`'s stable error codes).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CallFailure {
+    pub code: String,
+    pub message: String,
+}
+
+/// `CALL_RESULT` payload: exactly one of `result` (JSON text) and `error`.
+/// `callsLeft` and `fuelLeft` hand back what the responder did not spend.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallResponse {
+    #[serde(default)]
+    pub result: Option<String>,
+    #[serde(default)]
+    pub error: Option<CallFailure>,
+    #[serde(default)]
+    pub calls_left: u64,
+    #[serde(default)]
+    pub fuel_left: u64,
+}
+
+fn encode_call_frame<T: serde::Serialize>(tag: u8, request_id: u16, body: &T) -> Vec<u8> {
+    let json = serde_json::to_vec(body).unwrap_or_default();
+    let mut buf = Vec::with_capacity(3 + json.len());
+    buf.push(tag);
+    buf.extend_from_slice(&request_id.to_be_bytes());
+    buf.extend_from_slice(&json);
+    buf
+}
+
+/// Encode CALL: `[0x50] [request_id: u16] [json CallRequest]`.
+pub fn encode_call(request_id: u16, request: &CallRequest) -> Vec<u8> {
+    encode_call_frame(tag::CALL, request_id, request)
+}
+
+/// Encode CALL_RESULT: `[0x51] [request_id: u16] [json CallResponse]`.
+pub fn encode_call_result(request_id: u16, response: &CallResponse) -> Vec<u8> {
+    encode_call_frame(tag::CALL_RESULT, request_id, response)
+}
+
+fn decode_call_frame<T: serde::de::DeserializeOwned>(data: &[u8]) -> Option<(u16, T)> {
+    let id = u16::from_be_bytes([*data.first()?, *data.get(1)?]);
+    Some((id, serde_json::from_slice(&data[2..]).ok()?))
+}
+
+/// Decode CALL (after the tag).
+pub fn decode_call(data: &[u8]) -> Option<(u16, CallRequest)> {
+    decode_call_frame(data)
+}
+
+/// Decode CALL_RESULT (after the tag).
+pub fn decode_call_result(data: &[u8]) -> Option<(u16, CallResponse)> {
+    decode_call_frame(data)
+}
+
+/// `INVITE` payload.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InviteRequest {
+    pub token: String,
+}
+
+/// `INVITE_OK` payload: the drive the invitee may now sync, and whether it
+/// may also write.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InviteGranted {
+    pub drive: String,
+    pub write: bool,
+}
+
+/// Encode INVITE: `[0x52] [json InviteRequest]`.
+pub fn encode_invite(token: &str) -> Vec<u8> {
+    let mut buf = vec![tag::INVITE];
+    buf.extend_from_slice(
+        &serde_json::to_vec(&InviteRequest {
+            token: token.to_string(),
+        })
+        .unwrap_or_default(),
+    );
+    buf
+}
+
+/// Decode INVITE (after the tag): the token.
+pub fn decode_invite(data: &[u8]) -> Option<String> {
+    serde_json::from_slice::<InviteRequest>(data)
+        .ok()
+        .map(|r| r.token)
+}
+
+/// Encode INVITE_OK: `[0x53] [json InviteGranted]`.
+pub fn encode_invite_ok(granted: &InviteGranted) -> Vec<u8> {
+    let mut buf = vec![tag::INVITE_OK];
+    buf.extend_from_slice(&serde_json::to_vec(granted).unwrap_or_default());
+    buf
+}
+
+/// Decode INVITE_OK (after the tag).
+pub fn decode_invite_ok(data: &[u8]) -> Option<InviteGranted> {
+    serde_json::from_slice(data).ok()
+}
 
 // ---- Encoding ----
 
@@ -550,6 +749,21 @@ pub fn encode_commit_ok_slim(request_id: u16, commit_id: &str) -> Vec<u8> {
     buf
 }
 
+/// Encode a slim COMMIT_OK that also carries the node's write-load hint:
+/// `[0x14] [request_id: u16] [commit_id_utf8] 0x00 [pace_ms: decimal ascii]`.
+///
+/// Sent only to a client that listed both `commit-ok-slim` and
+/// `commit-pace`. A commit id never contains a NUL, so [`decode_commit_ok`]
+/// splits unambiguously and still reads the plain slim form. `pace_ms` is how
+/// long the client should leave between commits of one resource (0 = no
+/// load).
+pub fn encode_commit_ok_paced(request_id: u16, commit_id: &str, pace_ms: u32) -> Vec<u8> {
+    let mut buf = encode_commit_ok_slim(request_id, commit_id);
+    buf.push(0);
+    buf.extend_from_slice(pace_ms.to_string().as_bytes());
+    buf
+}
+
 /// A decoded COMMIT_OK, whichever form it came in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedCommitOk {
@@ -558,6 +772,8 @@ pub struct DecodedCommitOk {
     pub commit_id: String,
     /// The full commit JSON-AD, present only for the legacy full form.
     pub commit_json: Option<String>,
+    /// The write-load hint of a paced slim form; `None` when the frame had none.
+    pub pace_ms: Option<u32>,
 }
 
 /// Decode a COMMIT_OK payload (slice *after* the tag byte) in either form:
@@ -577,12 +793,18 @@ pub fn decode_commit_ok(data: &[u8]) -> Option<DecodedCommitOk> {
             request_id: decoded.request_id,
             commit_id: id,
             commit_json: Some(decoded.commit_json.to_string()),
+            pace_ms: None,
         });
     }
+    let (id, pace_ms) = match body.split_once('\0') {
+        Some((id, pace)) => (id, pace.trim().parse().ok()),
+        None => (body, None),
+    };
     Some(DecodedCommitOk {
         request_id: decoded.request_id,
-        commit_id: body.to_string(),
+        commit_id: id.to_string(),
         commit_json: None,
+        pace_ms,
     })
 }
 
@@ -2156,6 +2378,14 @@ mod wire_vectors {
                 "commit_ok_slim",
                 encode_commit_ok_slim(9, "did:ad:commit:abc"),
             ),
+            (
+                "commit_ok_paced",
+                encode_commit_ok_paced(9, "did:ad:commit:abc", 2500),
+            ),
+            (
+                "error_busy",
+                encode_error(9, error_code::BUSY, &busy_message(1730)),
+            ),
             ("challenge", encode_challenge("0badf00d")),
             ("sub", encode_sub("did:ad:d")),
             ("unsub", encode_unsub("did:ad:d")),
@@ -2296,6 +2526,15 @@ mod wire_vectors {
         let slim = decode_commit_ok(&hex_of("commit_ok_slim")[1..]).unwrap();
         assert_eq!(slim.request_id, 9);
         assert_eq!(slim.commit_id, "did:ad:commit:abc");
+        assert_eq!(slim.pace_ms, None);
+        let paced = decode_commit_ok(&hex_of("commit_ok_paced")[1..]).unwrap();
+        assert_eq!(paced.commit_id, "did:ad:commit:abc");
+        assert_eq!(paced.pace_ms, Some(2500));
+        assert_eq!(paced.commit_json, None);
+        let busy = decode_error(&hex_of("error_busy")[1..]).unwrap();
+        assert_eq!(busy.code, error_code::BUSY);
+        assert_eq!(retry_after_ms_from_message(&busy.message), Some(1730));
+        assert_eq!(classify_commit_error(&busy.message), error_code::BUSY);
         assert!(slim.commit_json.is_none());
         assert_eq!(
             decode_challenge(&hex_of("challenge")[1..]),

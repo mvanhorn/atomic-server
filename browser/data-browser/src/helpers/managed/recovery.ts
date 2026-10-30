@@ -1,4 +1,5 @@
-import { canonicalIdentifier } from '@tomic/lib';
+import { canonicalIdentifier, encodeB64 } from '@tomic/lib';
+import { base64ToBytes, randomBytes } from '../bytes';
 import { accountPasskey } from './accountPasskey';
 import { getManagedAccount } from './session';
 import { isRunningInTauri } from '../tauri';
@@ -124,34 +125,6 @@ const RECOVERY_CODE_GROUPS = 5;
 const RECOVERY_CODE_CHARS = RECOVERY_CODE_GROUP_LEN * RECOVERY_CODE_GROUPS;
 const RECOVERY_CODE_BYTES = Math.ceil((RECOVERY_CODE_CHARS * 5) / 8);
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-
-  return btoa(binary);
-}
-
-function base64ToBytes(value: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  return bytes;
-}
-
-function randomBytes(length: number): Uint8Array<ArrayBuffer> {
-  const bytes = new Uint8Array(length);
-  crypto.getRandomValues(bytes);
-
-  return bytes;
-}
-
 /** Generate a machine-strength recovery code, e.g. `XXXXX-XXXXX-XXXXX-XXXXX-XXXXX`. */
 export function generateRecoveryCode(): string {
   const bytes = randomBytes(RECOVERY_CODE_BYTES);
@@ -263,10 +236,19 @@ export async function decryptRecoverySecret(
 
 // --- Envelope v2 (DEK + recovery-code wrapper via Argon2id) ---
 
-type Argon2WasmModule = {
+export type AtomicWasmModule = {
   default: (init?: {
     module_or_path: string | WebAssembly.Module;
   }) => Promise<unknown>;
+  /** `values` is `{ [propertySubject]: number | string | boolean | null }`. */
+  evaluateFormula: (
+    expression: unknown,
+    values: unknown,
+    nowMs: number,
+    /** Minutes east of UTC; a DATE is midnight in this zone. */
+    tzOffsetMinutes: number,
+  ) => number | null;
+  validateFormula: (expression: unknown) => string | null;
   argon2idDeriveKey: (
     secret: string,
     salt: Uint8Array,
@@ -277,25 +259,26 @@ type Argon2WasmModule = {
 };
 
 /** What the dynamic import actually gives us: an older build of the glue has
- * `default` but not the KDF, which is the case {@link loadArgon2Wasm} checks. */
-type LoadedWasmModule = Partial<Argon2WasmModule> &
-  Pick<Argon2WasmModule, 'default'>;
+ * `default` but not the exports added later, which is what {@link loadAtomicWasm}
+ * checks. */
+type LoadedWasmModule = Partial<AtomicWasmModule> &
+  Pick<AtomicWasmModule, 'default'>;
 
-let argon2ModulePromise: Promise<Argon2WasmModule> | null = null;
+let wasmModulePromise: Promise<AtomicWasmModule> | null = null;
 
 /**
  * Lazily loads the atomic_wasm bundle on the main thread, independent of the
- * ClientDb worker (initClientDb.ts) — this is a stateless KDF call, not a
- * database, so it doesn't need OPFS or worker/leader-election machinery.
+ * ClientDb worker (initClientDb.ts) — its stateless exports (the KDF, formula
+ * evaluation) are not a database, so it doesn't need OPFS or worker/leader-election machinery.
  *
  * The export is verified rather than assumed. A page that spans a deploy can
  * hold a module from an older build (see `helpers/wasmUrls.ts`), where calling
  * the missing KDF surfaces as a bare "is not a function" TypeError halfway
  * through generating a recovery code. Failing here instead says what to do.
  */
-async function loadArgon2Wasm(): Promise<Argon2WasmModule> {
-  if (!argon2ModulePromise) {
-    argon2ModulePromise = (async () => {
+export async function loadAtomicWasm(): Promise<AtomicWasmModule> {
+  if (!wasmModulePromise) {
+    wasmModulePromise = (async () => {
       try {
         const url = wasmJsUrl();
         const loaded = (await import(
@@ -309,18 +292,18 @@ async function loadArgon2Wasm(): Promise<Argon2WasmModule> {
           );
         }
 
-        return loaded as Argon2WasmModule;
+        return loaded as AtomicWasmModule;
       } catch (e) {
         // Never memoize a failure: after the reload this asks for, and for an
         // offline blip on the way to a 6MB binary, a retry must be able to
         // load it rather than replay the rejection for the tab's lifetime.
-        argon2ModulePromise = null;
+        wasmModulePromise = null;
         throw e;
       }
     })();
   }
 
-  return argon2ModulePromise;
+  return wasmModulePromise;
 }
 
 async function deriveKeyFromRecoveryCode(
@@ -329,7 +312,7 @@ async function deriveKeyFromRecoveryCode(
   usages: KeyUsage[],
   kdfParams?: Record<string, unknown>,
 ): Promise<CryptoKey> {
-  const wasm = await loadArgon2Wasm();
+  const wasm = await loadAtomicWasm();
   const memKib = Number(kdfParams?.mem_kib ?? ARGON2_MEM_KIB);
   const iterations = Number(kdfParams?.iterations ?? ARGON2_ITERATIONS);
   const parallelism = Number(kdfParams?.parallelism ?? ARGON2_PARALLELISM);
@@ -650,10 +633,10 @@ async function wrapDekWithPasskey(
       wrapper_type: 'webauthn-prf',
       kdf_algorithm: '',
       kdf_params: account ? { rp_id: account.rpId, account_passkey: true } : {},
-      salt: bytesToBase64(prfSalt),
-      wrapped_dek: bytesToBase64(new Uint8Array(wrappedDek)),
-      wrap_nonce: bytesToBase64(wrapNonce),
-      credential_id: bytesToBase64(credentialId),
+      salt: encodeB64(prfSalt),
+      wrapped_dek: encodeB64(new Uint8Array(wrappedDek)),
+      wrap_nonce: encodeB64(wrapNonce),
+      credential_id: encodeB64(credentialId),
       label: `Passkey added ${new Date().toISOString().slice(0, 10)}`,
     },
   };
@@ -680,8 +663,8 @@ async function sealSecret(secret: string): Promise<{
 
   return {
     dek,
-    encryptedSecret: bytesToBase64(new Uint8Array(ciphertext)),
-    nonce: bytesToBase64(secretNonce),
+    encryptedSecret: encodeB64(new Uint8Array(ciphertext)),
+    nonce: encodeB64(secretNonce),
   };
 }
 
@@ -713,9 +696,9 @@ async function wrapDekWithCode(
     wrapper_type: 'recovery-code',
     kdf_algorithm: 'argon2id',
     kdf_params: kdfParams,
-    salt: bytesToBase64(wrapperSalt),
-    wrapped_dek: bytesToBase64(new Uint8Array(wrappedDek)),
-    wrap_nonce: bytesToBase64(wrapNonce),
+    salt: encodeB64(wrapperSalt),
+    wrapped_dek: encodeB64(new Uint8Array(wrappedDek)),
+    wrap_nonce: encodeB64(wrapNonce),
     label: `Recovery code saved ${new Date().toISOString().slice(0, 10)}`,
   };
 }
@@ -916,7 +899,7 @@ async function wrapDekWithAssisted(
   dek: Uint8Array<ArrayBuffer>,
   agentSubject: string,
 ): Promise<RecoveryWrapperInput> {
-  const salt = bytesToBase64(randomBytes(SALT_BYTES));
+  const salt = encodeB64(randomBytes(SALT_BYTES));
   const { key, keyId } = await assistedKey(agentSubject, salt, ['encrypt']);
   const wrapNonce = randomBytes(NONCE_BYTES);
   const wrappedDek = await crypto.subtle.encrypt(
@@ -931,8 +914,8 @@ async function wrapDekWithAssisted(
     // Which service key made it, so it still opens after a rotation.
     kdf_params: keyId ? { key_id: keyId } : {},
     salt,
-    wrapped_dek: bytesToBase64(new Uint8Array(wrappedDek)),
-    wrap_nonce: bytesToBase64(wrapNonce),
+    wrapped_dek: encodeB64(new Uint8Array(wrappedDek)),
+    wrap_nonce: encodeB64(wrapNonce),
     label: `${PRODUCT_NAME} account`,
   };
 }
@@ -1071,40 +1054,114 @@ function addAssistedWrapperInBackground(
   dek: Uint8Array<ArrayBuffer>,
   replace = false,
 ): void {
+  if (hasAssistedWrapper(recovery) && !replace) return;
+
+  void appendAssistedWrapper(recovery, dek).catch(() => undefined);
+}
+
+/**
+ * Wrap `dek` with the account's assisted key and append it to the stored
+ * backup. Resolves the saved backup, or null when this account cannot have
+ * one: the service does not offer it, the signed-in account is not the one
+ * owning this backup, or its owner turned assisted recovery off.
+ */
+async function appendAssistedWrapper(
+  recovery: RecoverySecret,
+  dek: Uint8Array<ArrayBuffer>,
+): Promise<RecoverySecret | null> {
+  if (recovery.format_version !== 2) return null;
+
+  if (!(await isAssistedRecoveryAvailable())) return null;
+
+  // The wrapper is appended to the signed-in account's backup, so only
+  // when that account is the one owning this backup.
+  const account = await getManagedAccount().catch(() => null);
+
   if (
-    recovery.format_version !== 2 ||
-    (hasAssistedWrapper(recovery) && !replace)
+    !account ||
+    account.email !== recovery.owner_email ||
+    account.assisted_recovery_off
   )
-    return;
+    return null;
 
-  void (async () => {
-    if (!(await isAssistedRecoveryAvailable())) return;
-    // The wrapper is appended to the signed-in account's backup, so only
-    // when that account is the one owning this backup.
-    const account = await getManagedAccount().catch(() => null);
+  const wrapper = await wrapDekWithAssisted(dek, recovery.agent_subject);
+  const response = await managedFetch('/recovery-secret/wrappers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent_subject: recovery.agent_subject,
+      encrypted_secret: recovery.encrypted_secret,
+      nonce: recovery.nonce,
+      wrapper,
+    }),
+  });
 
-    if (
-      !account ||
-      account.email !== recovery.owner_email ||
-      account.assisted_recovery_off
-    )
-      return;
+  if (!response.ok) return null;
 
-    const wrapper = await wrapDekWithAssisted(dek, recovery.agent_subject);
-    const response = await managedFetch('/recovery-secret/wrappers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agent_subject: recovery.agent_subject,
-        encrypted_secret: recovery.encrypted_secret,
-        nonce: recovery.nonce,
-        wrapper,
-      }),
-    });
+  const saved = (await response.json()) as RecoverySecret;
+  cacheRecoverySecret(saved);
 
-    if (response.ok)
-      cacheRecoverySecret((await response.json()) as RecoverySecret);
-  })().catch(() => undefined);
+  return saved;
+}
+
+/**
+ * Turn on signing in as the way into an existing backup that predates
+ * assisted recovery. Only something that already opens it can: one passkey
+ * prompt, or the recovery code when there is no passkey. Throws when the
+ * backup could not be opened or the wrapper could not be stored.
+ */
+export async function enableAssistedForBackup(
+  recovery: RecoverySecret,
+  recoveryCode?: string,
+): Promise<RecoverySecret> {
+  let dek: Uint8Array<ArrayBuffer> | undefined;
+
+  const keep = (opened: Uint8Array<ArrayBuffer>) => {
+    dek = opened;
+  };
+
+  if (recoveryCode) {
+    const wrapper = recovery.wrappers.find(
+      w => w.wrapper_type === 'recovery-code',
+    );
+
+    if (!wrapper) throw new Error('This backup has no recovery code.');
+
+    const wrapKey = await deriveKeyFromRecoveryCode(
+      normalizeRecoveryCodeInput(recoveryCode),
+      base64ToBytes(wrapper.salt),
+      ['decrypt'],
+      wrapper.kdf_params,
+    );
+    await openWithDekKey(
+      recovery,
+      wrapper,
+      wrapKey,
+      'Wrong recovery code',
+      keep,
+    );
+  } else {
+    const { wrapper, key } = await unlockPasskeyWrapper(recovery);
+    await openWithDekKey(
+      recovery,
+      wrapper,
+      key,
+      'That passkey could not unlock this backup.',
+      keep,
+    );
+  }
+
+  if (!dek) throw new Error('Your backup could not be opened.');
+
+  const saved = await appendAssistedWrapper(recovery, dek);
+
+  if (!saved) {
+    throw new Error(
+      `Could not turn this on in your ${PRODUCT_NAME} account. Sign in to it and try again.`,
+    );
+  }
+
+  return saved;
 }
 
 /** Whether this backup can be unlocked by a passkey / by a typed code. */
@@ -1230,7 +1287,7 @@ async function unlockPasskeyGroup(
   const wrapper =
     assertion &&
     wrappers.find(
-      w => w.credential_id === bytesToBase64(new Uint8Array(assertion.rawId)),
+      w => w.credential_id === encodeB64(new Uint8Array(assertion.rawId)),
     );
   const output =
     assertion &&
@@ -1681,6 +1738,9 @@ export async function saveRecoverySecret(input: RecoverySecretInput) {
   return saved;
 }
 
+const RATE_LIMITED =
+  'Too many requests for the encrypted recovery backup. Wait a minute and try again.';
+
 const pendingRecoveryReads = new Map<string, Promise<RecoverySecret | null>>();
 const recoveryReadCooldowns = new Map<string, number>();
 
@@ -1696,9 +1756,7 @@ export async function getRecoverySecret(): Promise<RecoverySecret | null> {
     if (until <= now) recoveryReadCooldowns.delete(readKey);
   }
 
-  if (recoveryReadCooldowns.has(key)) {
-    throw new Error('Could not load encrypted recovery backup.');
-  }
+  if (recoveryReadCooldowns.has(key)) throw new Error(RATE_LIMITED);
 
   const pending = pendingRecoveryReads.get(key);
   if (pending) return pending;
@@ -1744,6 +1802,8 @@ async function fetchRecoverySecret(
   ) {
     return null;
   }
+
+  if (response.status === 429) throw new Error(RATE_LIMITED);
 
   if (!response.ok) {
     throw new Error('Could not load encrypted recovery backup.');

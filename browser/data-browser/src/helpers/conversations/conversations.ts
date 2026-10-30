@@ -1,4 +1,5 @@
 import {
+  canonicalIdentifier,
   conversations,
   core,
   Datatype,
@@ -7,6 +8,7 @@ import {
   type Resource,
   type Store,
 } from '@tomic/react';
+import { membersOf, sameMembers } from './conversationMembers';
 import {
   addEpoch,
   encryptionKeyFor,
@@ -83,20 +85,29 @@ async function memberFor(
   return { agent, encryptionKey: key };
 }
 
-/** Whether `conversation` has exactly these members. */
+/** Whether `agent` is one of the members of `conversation`, however spelled. */
+export function hasMember(conversation: Resource, agent: string): boolean {
+  const read = membersOf(conversation);
+
+  return !!read && read.includes(canonicalIdentifier(agent));
+}
+
+/** Whether `conversation` has exactly these members, however they are spelled
+ *  (`did:ad:agent:X` and `atomic:agent:X` are the same agent). */
 export function hasMembers(conversation: Resource, members: string[]): boolean {
-  const read = conversation.get(core.properties.read);
+  const read = membersOf(conversation);
 
-  if (!Array.isArray(read) || read.length !== new Set(members).size) {
-    return false;
-  }
-
-  return members.every(member => read.includes(member));
+  return !!read && sameMembers(read, members);
 }
 
 /**
  * Creates a conversation between the signed-in agent and `others`, and
  * returns it saved. The caller lists it on the private drive.
+ *
+ * An empty `others` is a note to yourself. Nobody else needs a host for it, so
+ * it stays on this device like a browser-only drive and never reaches a server
+ * (a managed node would refuse it as "not enrolled" anyway). A non-empty
+ * `others` that holds nothing but yourself is a mistake and throws.
  */
 export async function startConversation(
   store: Store,
@@ -105,8 +116,9 @@ export async function startConversation(
   const agent = store.getAgent();
   const me = requireSubject(agent);
   const memberSubjects = [me, ...others.filter(other => other !== me)];
+  const noteToSelf = others.length === 0;
 
-  if (memberSubjects.length < 2) {
+  if (memberSubjects.length < 2 && !noteToSelf) {
     throw new Error('Pick someone to message.');
   }
 
@@ -136,6 +148,11 @@ export async function startConversation(
       [conversations.properties.conversationKeys]: Datatype.STRING,
     },
   });
+
+  // Before the first save: registration is what keeps the genesis out of the
+  // outbox. `makeDriveLocal` is for a drive a server may already hold, and
+  // verifies its copy against that server first; this one does not exist yet.
+  if (noteToSelf) store.registerLocalOnlyDrive(conversation.subject);
 
   await conversation.save();
   // The server grants the creator `write` at genesis. Give it up, or the

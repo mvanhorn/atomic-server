@@ -19,6 +19,8 @@ pub enum DidKind {
     Agent,
     Commit,
     Blob,
+    Property,
+    Lens,
     Node,
     Other,
 }
@@ -220,11 +222,6 @@ impl Subject {
         crate::identifiers::identifier_kind(url.as_str())
     }
 
-    /// Returns true if this is an unprefixed `atomic:{genesis}` / `did:ad:{genesis}` resource.
-    pub fn is_resource_did(&self) -> bool {
-        self.did_kind() == Some(DidKind::Resource)
-    }
-
     /// Returns true if this is an Agent subject (`atomic:agent:` / `did:ad:agent:`).
     pub fn is_agent_did(&self) -> bool {
         self.did_kind() == Some(DidKind::Agent)
@@ -240,11 +237,6 @@ impl Subject {
         self.did_kind() == Some(DidKind::Blob)
     }
 
-    /// Returns true if this is a Node subject (`atomic:node:` / `did:ad:node:`).
-    pub fn is_node_did(&self) -> bool {
-        self.did_kind() == Some(DidKind::Node)
-    }
-
     /// If this is a blob subject, returns the hex-encoded BLAKE3 hash
     /// (query / fragment stripped). Returns `None` for any other variant.
     pub fn blob_hash_hex(&self) -> Option<&str> {
@@ -252,6 +244,12 @@ impl Subject {
             Subject::Did { url, .. } => crate::identifiers::blob_hash_hex(url.as_str()),
             _ => None,
         }
+    }
+
+    /// The raw BLAKE3 hash of a blob subject. `None` for any other subject,
+    /// or when the hex is not exactly 32 bytes.
+    pub fn blob_hash(&self) -> Option<[u8; 32]> {
+        <[u8; 32]>::try_from(hex::decode(self.blob_hash_hex()?).ok()?).ok()
     }
 
     /// Agent public key, if this is an agent identifier.
@@ -298,11 +296,6 @@ impl Subject {
     /// Returns true if this is an internal subject (mapped to the server's base domain).
     pub fn is_internal(&self) -> bool {
         matches!(self, Subject::Internal { .. })
-    }
-
-    /// Returns true if this is an external subject (not mapped to the server's base domain).
-    pub fn is_external(&self) -> bool {
-        matches!(self, Subject::External(_))
     }
 
     /// Returns true if this subject is local to the server (Internal or Did).
@@ -854,6 +847,8 @@ mod tests {
             ("did:ad:agent:key", DidKind::Agent),
             ("did:ad:commit:signature", DidKind::Commit),
             ("did:ad:blob:hash", DidKind::Blob),
+            ("did:ad:prop:hash", DidKind::Property),
+            ("did:ad:lens:hash", DidKind::Lens),
             ("did:ad:node:node-id", DidKind::Node),
             ("did:ad:future:value", DidKind::Other),
         ];

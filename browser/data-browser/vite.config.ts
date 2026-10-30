@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig, loadEnv, parseAstAsync } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { oxcReactCompiler } from './oxcReactCompilerPlugin';
@@ -7,6 +7,7 @@ import prismjs from 'vite-plugin-prismjs';
 import { prismjsOptimizeDeps, prismjsOptions } from './prismDeps';
 import wasm from 'vite-plugin-wasm';
 import { wuchale } from 'wuchale/vite';
+import { sentryVitePlugin } from '@sentry/vite-plugin';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
@@ -26,6 +27,13 @@ const isVitest = process.env.VITEST === 'true';
 // setting, so day-to-day debugging is unaffected; set SOURCEMAP=1 to put them
 // back into a production build when you need to read a minified stack trace.
 const wantSourcemaps = process.env.SOURCEMAP === '1';
+
+// Readable stack traces in Sentry without shipping the maps. With a token, the
+// build writes hidden source maps (no `sourceMappingURL` comment), uploads them
+// under the release the SDK reports, and deletes them, so the dist stays as
+// small as above. Without a token, nothing changes. Add `SENTRY_AUTH_TOKEN`
+// to the environment of every build that is served to users.
+const uploadSourcemaps = Boolean(process.env.SENTRY_AUTH_TOKEN) && !isVitest;
 
 const repoLibDefaults = path.resolve(__dirname, '../../lib/defaults');
 const ciLibDefaults = path.resolve(__dirname, '../lib-defaults');
@@ -219,6 +227,61 @@ export default defineConfig(({ mode }) => {
         },
       },
       {
+        // mdast-util-gfm-autolink-literal finds emails with a lookbehind,
+        // which Safari before 16.4 rejects (see the check below). Its
+        // `findEmail` checks the previous character itself, so the
+        // lookbehind can go. A transform, not a pnpm patch: pnpm applies a
+        // new patch to a fresh install only, and an existing node_modules
+        // keeps the unpatched file in the patched package's folder.
+        name: 'autolink-email-without-lookbehind',
+        enforce: 'pre',
+        transform(code, id) {
+          if (!id.includes('mdast-util-gfm-autolink-literal')) return;
+
+          const lookbehind = '/(?<=^|\\s|\\p{P}|\\p{S})([-.\\w+]+)@';
+
+          if (!code.includes(lookbehind)) return;
+
+          return code.replace(lookbehind, '/([-.\\w+]+)@');
+        },
+      },
+      {
+        // Safari before 16.4 (iOS 16.3 and older) throws a SyntaxError on a
+        // regex literal with a lookbehind, `(?<=` or `(?<!`, and then loads
+        // none of the bundle: a blank page that never reaches Sentry. The
+        // build target doesn't lower regexes, so fail the build instead.
+        name: 'no-lookbehind-regex-literals',
+        apply: 'build',
+        async generateBundle(_options, bundle) {
+          const found: string[] = [];
+
+          const walk = (node: unknown, file: string) => {
+            if (!node || typeof node !== 'object') return;
+
+            const regex = (node as { regex?: { pattern: string } }).regex;
+
+            if (regex && /\(\?<[=!]/.test(regex.pattern)) {
+              found.push(`${file}: /${regex.pattern.slice(0, 80)}/`);
+            }
+
+            for (const child of Object.values(node)) walk(child, file);
+          };
+
+          for (const item of Object.values(bundle)) {
+            if (item.type === 'chunk') {
+              walk(await parseAstAsync(item.code), item.fileName);
+            }
+          }
+
+          if (found.length > 0) {
+            this.error(
+              `Lookbehind regex literals break Safari < 16.4; rewrite them ` +
+                `(or patch the dependency):\n${found.join('\n')}`,
+            );
+          }
+        },
+      },
+      {
         // `prefetch.json`: what a first visit downloads before the app can
         // start, for another page to warm the HTTP cache with ahead of time.
         // atomic.place's homepage reads it while a visitor looks at the "Try
@@ -282,7 +345,14 @@ export default defineConfig(({ mode }) => {
       // is released (vitejs/vite-plugin-react#1419). The compiler transform is
       // skipped under Vitest — unit tests call `transformSync` directly — but
       // the oxc styled-components options still apply so displayName works.
-      ...oxcReactCompiler({ compile: !isVitest }),
+      // The app compiles `@tomic/react` too: it is linked from outside
+      // `node_modules`, so the compiler sees its hooks. Tests compile just
+      // that package, so a hook the compiler would cache wrongly fails here.
+      ...oxcReactCompiler(
+        isVitest
+          ? { only: /\/browser\/react\/src\// }
+          : { compile: true },
+      ),
       react(),
       !isVitest &&
         !isTauri &&
@@ -440,6 +510,29 @@ export default defineConfig(({ mode }) => {
           },
         }),
       !isVitest && prismjs(prismjsOptions),
+      uploadSourcemaps &&
+        sentryVitePlugin({
+          org: 'ontola',
+          project: 'atomic-browser',
+          url: 'https://us.sentry.io',
+          authToken: process.env.SENTRY_AUTH_TOKEN,
+          telemetry: false,
+          // Must equal the `release` that `initSentry` passes to the SDK.
+          release: {
+            name: `atomic-data-browser@${appVersion}+${gitCommit}`,
+            inject: false,
+            setCommits: false,
+          },
+          sourcemaps: {
+            filesToDeleteAfterUpload: wantSourcemaps
+              ? undefined
+              : [`${isTauri ? 'dist-tauri' : 'dist'}/**/*.map`],
+          },
+          // A Sentry outage must not fail a deploy.
+          errorHandler: err => {
+            console.warn(`[sentry] source map upload failed: ${err.message}`);
+          },
+        }),
     ],
     optimizeDeps: {
       // React Compiler emits `import { c as _c } from "react/compiler-runtime"`
@@ -562,7 +655,7 @@ export default defineConfig(({ mode }) => {
     build: {
       target: 'baseline-widely-available',
       outDir: isTauri ? 'dist-tauri' : 'dist',
-      sourcemap: wantSourcemaps,
+      sourcemap: wantSourcemaps ? true : uploadSourcemaps ? 'hidden' : false,
       // Don't inline worker scripts as `data:` URLs — the production CSP is
       // `worker-src 'self'` and would block them, killing the ClientDb. Below
       // the default 4096-byte limit, Vite would otherwise inline our 1.7KB

@@ -114,11 +114,12 @@ msgstr "AI Agents"
 #: src/chunks/AppPage/ConnectDialog.tsx
 #: src/chunks/DashboardPage/BlockConfigDialog.tsx
 #: src/chunks/FormBuilder/FieldOptions/LinkOptionsDialog.tsx
+#: src/chunks/PluginRuns/AddMarketplaceDialog.tsx
 #: src/chunks/PluginRuns/RunPluginDialog.tsx
 #: src/chunks/Plugins/InstallationReviewDialog.tsx
 #: src/chunks/TablePage/BreakdownDialog.tsx
-#: src/chunks/TablePage/CreateTableFormDialog.tsx
 #: src/chunks/TablePage/CellSelectionMenu.tsx
+#: src/chunks/TablePage/CreateTableFormDialog.tsx
 #: src/chunks/TablePage/DerivedColumnDialog.tsx
 #: src/chunks/TablePage/Issues/IssuesView.tsx
 #: src/chunks/TablePage/PropertyForm/ExternalPropertyDialog.tsx
@@ -127,9 +128,12 @@ msgstr "AI Agents"
 #: src/chunks/Website/WebsitePage.tsx
 #: src/chunks/Website/WebsitePage.tsx
 #: src/components/AvatarCropper.tsx
+#: src/components/Cloud/DriveAddress.tsx
 #: src/components/ConfirmationDialog.tsx
+#: src/components/ConnectAppForm.tsx
 #: src/components/EditLanguagesDialog.tsx
 #: src/components/HostUI/hostUIDialogs.tsx
+#: src/components/MoveResourceDialog.tsx
 #: src/components/ParentPicker/ParentPickerDialog.tsx
 #: src/components/Share/ShareDialog.tsx
 #: src/components/forms/EditFormDialog.tsx
@@ -137,6 +141,7 @@ msgstr "AI Agents"
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewBookmarkDialog.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewCollectionDialog.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewDashboardDialog.tsx
+#: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewDriveDialog.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewFormDialog.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewOntologyDialog.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewTableDialog.tsx
@@ -145,7 +150,6 @@ msgstr "AI Agents"
 #: src/components/forms/ValueForm/ValueFormEdit.tsx
 #: src/routes/History/HistoryMobileView.tsx
 #: src/views/Conversation/NewMessageDialog.tsx
-#: src/routes/SyncRoute.tsx
 #: src/views/Installation/AssignRights.tsx
 #: src/views/OntologyPage/NewClassButton.tsx
 #: src/views/OntologyPage/NewPropertyButton.tsx
@@ -262,13 +266,12 @@ msgstr "Automatically compact the conversation when input tokens exceed this per
 #: src/chunks/AI/MessageContextItem.tsx
 #: src/chunks/DashboardPage/DashboardBlock.tsx
 #: src/chunks/RTE/EditLinkForm.tsx
-#: src/chunks/TablePage/DerivedColumnHeading.tsx
-#: src/chunks/TablePage/DerivedColumnHeading.tsx
+#: src/chunks/TablePage/ColumnSpecHeading.tsx
+#: src/chunks/TablePage/ColumnSpecHeading.tsx
 #: src/chunks/TablePage/QuickAddDialog.tsx
-#: src/chunks/TablePage/RowActionHeading.tsx
-#: src/chunks/TablePage/RowActionHeading.tsx
 #: src/chunks/TablePage/TableHeadingMenu.tsx
 #: src/chunks/TablePage/TableHeadingMenu.tsx
+#: src/components/Share/PeopleWithAccess.tsx
 #: src/components/forms/ResourceSelector/ResourceSelector.tsx
 #: src/routes/SyncRoute.tsx
 #: src/routes/SyncRoute.tsx
@@ -281,8 +284,6 @@ msgid "Choose a default model"
 msgstr "Choose a default model"
 
 #: src/chunks/AI/AISetupPanel.tsx
-#: src/components/DemoExitButton.tsx
-#: src/routes/NewDriveRoute.tsx
 msgid "Back"
 msgstr "Back"
 
@@ -312,7 +313,7 @@ msgid "Ollama"
 msgstr "Ollama"
 
 #: src/chunks/AI/AISetupPanel.tsx
-#: src/chunks/Templates/DriveTemplateSetup.tsx
+#: src/components/AI/LocalNetworkNotice.tsx
 msgid "Continue"
 msgstr "Continue"
 
@@ -487,8 +488,7 @@ msgstr "Optional HTTP headers to send when connecting to this MCP server"
 
 #: src/actions/resourceActions.tsx
 #: src/chunks/AI/AgentConfigItem.tsx
-#: src/chunks/TablePage/DerivedColumnHeading.tsx
-#: src/chunks/TablePage/RowActionHeading.tsx
+#: src/chunks/TablePage/ColumnSpecHeading.tsx
 #: src/chunks/TablePage/TableHeadingMenu.tsx
 #: src/components/MetaSetter.tsx
 #: src/routes/EditRoute.tsx
@@ -525,14 +525,6 @@ msgid "No results"
 msgstr "No results"
 
 #: src/helpers/AppSettings.tsx
-msgid "Signed in!"
-msgstr "Signed in!"
-
-#: src/helpers/AppSettings.tsx
-msgid "Signed out."
-msgstr "Signed out."
-
-#: src/helpers/AppSettings.tsx
 msgid "Agent setting failed: "
 msgstr "Agent setting failed: "
 
@@ -544,6 +536,8 @@ msgstr "Not configured"
 #: src/components/AI/ProviderStatus.tsx
 #: src/components/SideBar/syncStatus.tsx
 #: src/components/SideBar/syncStatus.tsx
+#: src/routes/ConnectAgentRoute.tsx
+#: src/routes/SyncRoute.tsx
 #: src/routes/SyncRoute.tsx
 #: src/routes/SyncRoute.tsx
 msgid "Connected"
@@ -595,7 +589,6 @@ msgstr "Required field."
 msgid "Error: {0}"
 msgstr "Error: {0}"
 
-#: src/chunks/Demo/SimulatedTypist.ts
 #: src/chunks/RTE/applyPatchedJsonToLoroDocCollaborative.ts
 msgid "Editor was destroyed before it finished initializing"
 msgstr "Editor was destroyed before it finished initializing"
@@ -625,10 +618,6 @@ msgid "Reading schema"
 msgstr "Reading schema"
 
 #: src/chunks/AI/AIChatMessageParts/MessageToolPart.tsx
-msgid "Listing user classes"
-msgstr "Listing user classes"
-
-#: src/chunks/AI/AIChatMessageParts/MessageToolPart.tsx
 msgid "Loading skill: <0/>"
 msgstr "Loading skill: <0/>"
 
@@ -649,17 +638,9 @@ msgstr "Thinking"
 msgid "Unable to connect to Ollama server. Check if the server is running and you configured the correct url in the settings"
 msgstr "Unable to connect to Ollama server. Check if the server is running and you configured the correct url in the settings"
 
-#: src/chunks/AI/AIChatPage.tsx
 #: src/chunks/AI/ModelSelect/OllamaModelSelector.tsx
-#: src/components/HighlightedCodeBlock.tsx
-#: src/components/Searchbar/TagSuggestionOverlay.tsx
-#: src/views/Card/ResourceCard.tsx
-#: src/views/Document/DocumentV2FullPage.tsx
-#: src/views/Document/DocumentV2FullPage.tsx
-#: src/views/Document/DocumentV2FullPage.tsx
 #: src/views/File/FilePreview.tsx
 #: src/views/File/FilePreviewThumbnail.tsx
-#: src/views/ResourcePage.tsx
 #: src/views/ResourceRow.tsx
 msgid "Loading..."
 msgstr "Loading..."
@@ -705,11 +686,11 @@ msgstr "Add an OpenRouter API key in settings"
 msgid "{0} /M output tokens"
 msgstr "{0} /M output tokens"
 
-#: src/components/SideBar/AIPanel.tsx
+#: src/components/SideBar/usePanelList.ts
 msgid "AI Chats"
 msgstr "AI Chats"
 
-#: src/components/SideBar/index.tsx
+#: src/components/SideBar/usePanelList.ts
 msgid "Ontologies"
 msgstr "Ontologies"
 
@@ -737,7 +718,6 @@ msgstr "Check the browser console for details, or try navigating back."
 msgid "404 Not found"
 msgstr "404 Not found"
 
-#: src/routes/Search/SearchOverlay.tsx
 #: src/routes/Search/SearchRoute.tsx
 #: src/views/EndpointPage.tsx
 msgid "No hits"
@@ -762,7 +742,6 @@ msgid "Result"
 msgstr "Result"
 
 #: src/components/OverlayContainer.tsx
-#: src/routes/Search/SearchOverlay.tsx
 #: src/routes/Search/SearchRoute.tsx
 msgid "With Tags:"
 msgstr "With Tags:"
@@ -845,11 +824,12 @@ msgstr "Unauthorized"
 msgid "This drive is private, sign in to view it"
 msgstr "This drive is private, sign in to view it"
 
-#: src/components/SideBar/SideBarHomePanels.tsx
+#: src/components/SideBar/SidebarDropZones.tsx
+#: src/components/SideBar/usePanelList.ts
 msgid "Favorites"
 msgstr "Favorites"
 
-#: src/components/SideBar/SideBarHomePanels.tsx
+#: src/components/SideBar/usePanelList.ts
 msgid "Shared with me"
 msgstr "Shared with me"
 
@@ -874,6 +854,7 @@ msgstr "Invalid Resource"
 
 #: src/chunks/AI/formatAIChatReport.ts
 #: src/components/SideBar/AIPanel.tsx
+#: src/routes/Search/ChatMatchRow.tsx
 msgid "Untitled Chat"
 msgstr "Untitled Chat"
 
@@ -952,15 +933,6 @@ msgstr "Create account and accept"
 msgid "I already have an account"
 msgstr "I already have an account"
 
-#~ msgid "Agent created!"
-#~ msgstr "Agent created!"
-
-#~ msgid "Agent Secret"
-#~ msgstr "Agent Secret"
-
-#~ msgid "Copy secret to continue"
-#~ msgstr "Copy secret to continue"
-
 #: src/views/ErrorPage.tsx
 #: src/views/ErrorPage.tsx
 #: src/views/File/ConvertToDocumentButton.tsx
@@ -1013,33 +985,29 @@ msgstr "Resources"
 #: src/components/NavBar.tsx
 #: src/components/NavBar.tsx
 #: src/components/NavBar.tsx
-#: src/views/Drive/DrivePage.tsx
+#: src/views/Drive/DriveSettingsDialog.tsx
 msgid "Tags"
 msgstr "Tags"
 
-#: src/views/Drive/DrivePage.tsx
+#: src/views/Drive/DriveSettingsDialog.tsx
 msgid "Add LLM instructions"
 msgstr "Add LLM instructions"
 
-#: src/views/Drive/DrivePage.tsx
+#: src/views/Drive/DriveSettingsDialog.tsx
 msgid "LLM Instructions"
 msgstr "LLM Instructions"
 
-#: src/views/Drive/DrivePage.tsx
+#: src/views/Drive/DriveSettingsDialog.tsx
 msgid "Default Ontology"
 msgstr "Default Ontology"
 
-#: src/views/Drive/DrivePage.tsx
+#: src/views/Drive/DriveSettingsDialog.tsx
 msgid "Plugins"
 msgstr "Plugins"
 
-#: src/views/Drive/DrivePage.tsx
+#: src/views/Drive/DriveSettingsDialog.tsx
 msgid "Remove tag"
 msgstr "Remove tag"
-
-#: src/views/ChatRoom/ChatRoomView.tsx
-msgid "Loading messages..."
-msgstr "Loading messages..."
 
 #: src/components/SideBar/MessagesPanel.tsx
 #: src/views/ChatRoom/ChatRoomView.tsx
@@ -1056,6 +1024,7 @@ msgstr "Chat input"
 
 #: src/chunks/RTE/AIChatInput/AsyncAIChatInput.tsx
 #: src/components/Share/ShareDialog.tsx
+#: src/routes/SendIdentityRoute.tsx
 #: src/views/ChatRoom/ChatRoomView.tsx
 msgid "Send"
 msgstr "Send"
@@ -1064,6 +1033,7 @@ msgstr "Send"
 msgid "Send message [enter]"
 msgstr "Send message [enter]"
 
+#: src/views/ChatRoom/ChatRoomView.tsx
 #: src/views/ChatRoom/ChatRoomView.tsx
 msgid "Copied message URL to clipboard"
 msgstr "Copied message URL to clipboard"
@@ -1097,10 +1067,6 @@ msgstr "loading..."
 #: src/views/ChatRoom/ChatRoomView.tsx
 msgid "to"
 msgstr "to"
-
-#: src/views/ImporterPage.tsx
-msgid "Imported!"
-msgstr "Imported!"
 
 #: src/views/ImporterPage.tsx
 msgid "Import to"
@@ -1176,6 +1142,7 @@ msgstr "Save failed: {0}"
 
 #: src/chunks/PluginRuns/AutomationWorkspace.tsx
 #: src/chunks/PluginRuns/IntegrationConnection.tsx
+#: src/components/Cloud/DriveAddress.tsx
 #: src/components/ProfileForm.tsx
 #: src/views/Canvas/CanvasPage.tsx
 msgid "Saving…"
@@ -1235,13 +1202,11 @@ msgid "Resource is loading..."
 msgstr "Resource is loading..."
 
 #: src/components/OverlayContainer.tsx
-#: src/routes/Search/SearchOverlay.tsx
 msgid "Search for resources..."
 msgstr "Search for resources..."
 
 #: src/components/OverlayContainer.tsx
 #: src/components/OverlayContainer.tsx
-#: src/routes/Search/SearchOverlay.tsx
 msgid "esc"
 msgstr "esc"
 
@@ -1251,7 +1216,6 @@ msgid "Start AI Chat with \"{0}\""
 msgstr "Start AI Chat with \"{0}\""
 
 #: src/components/OverlayContainer.tsx
-#: src/routes/Search/SearchOverlay.tsx
 msgid "<0/> <1/> navigate"
 msgstr "<0/> <1/> navigate"
 
@@ -1260,7 +1224,6 @@ msgid "<0/> chat"
 msgstr "<0/> chat"
 
 #: src/components/OverlayContainer.tsx
-#: src/routes/Search/SearchOverlay.tsx
 msgid "<0>esc</0> close"
 msgstr "<0>esc</0> close"
 
@@ -1311,10 +1274,6 @@ msgstr "Plugin Description"
 #: src/views/Installation/InstallationPage.tsx
 msgid "Uninstall"
 msgstr "Uninstall"
-
-#: src/views/Installation/InstallationPage.tsx
-msgid "Plugin uninstalled"
-msgstr "Plugin uninstalled"
 
 #: src/components/forms/NewForm/CustomCreateActions/BasicInstanceHandlers.ts
 msgid "Folder"
@@ -1407,17 +1366,14 @@ msgstr "Alt text"
 #: src/components/forms/ValueForm/ValueFormEdit.tsx
 #: src/routes/Share/ShareRoute.tsx
 #: src/views/Article/ArticleDescription.tsx
+#: src/views/Drive/GettingStartedCard.tsx
 #: src/views/Installation/InstallationPage.tsx
 #: src/views/OntologyPage/NewClassButton.tsx
 #: src/views/OntologyPage/NewPropertyButton.tsx
 msgid "Save"
 msgstr "Save"
 
-#. 0: files.length
-#: src/routes/NewResource/NewRoute.tsx
-msgid "Uploaded {0} files."
-msgstr "Uploaded {0} files."
-
+#: src/routes/AppSettings.tsx
 #: src/routes/NewResource/NewRoute.tsx
 msgid "Templates"
 msgstr "Templates"
@@ -1541,7 +1497,6 @@ msgid "Turtle / N-triples / N3"
 msgstr "Turtle / N-triples / N3"
 
 #: src/views/getting-started/GettingStartedFlow.tsx
-#: src/views/getting-started/GettingStartedFlow.tsx
 msgid "Create account"
 msgstr "Create account"
 
@@ -1574,6 +1529,7 @@ msgstr "This device"
 
 #: src/chunks/TablePage/PropertyForm/ExternalPropertyDialog.tsx
 #: src/components/EditLanguagesDialog.tsx
+#: src/components/Settings/IntegrationSettings.tsx
 msgid "Add"
 msgstr "Add"
 
@@ -1583,6 +1539,7 @@ msgid "Copy"
 msgstr "Copy"
 
 #: src/components/forms/SearchBox/SearchBox.tsx
+#: src/helpers/sentry.ts
 #: src/routes/LinkOpenRouter.tsx
 #: src/routes/SyncRoute.tsx
 #: src/routes/SyncRoute.tsx
@@ -1638,10 +1595,6 @@ msgid "History"
 msgstr "History"
 
 #: src/routes/Share/ShareRoute.tsx
-msgid "Share settings saved"
-msgstr "Share settings saved"
-
-#: src/routes/Share/ShareRoute.tsx
 msgid "Permissions for"
 msgstr "Permissions for"
 
@@ -1672,10 +1625,6 @@ msgstr "Unavailable"
 #: src/routes/InviteRoute.tsx
 msgid "No invite token provided."
 msgstr "No invite token provided."
-
-#: src/routes/History/HistoryRoute.tsx
-msgid "Resource version updated"
-msgstr "Resource version updated"
 
 #. 0: e instanceof Error ? e.message \\: String(e)
 #: src/routes/History/HistoryRoute.tsx
@@ -1752,7 +1701,6 @@ msgstr "Load anyway ({0})"
 #: src/chunks/RTE/CollaborativeEditor.tsx
 #: src/components/Share/useClassLabel.ts
 #: src/components/forms/NewForm/NewFormTitle.tsx
-#: src/hooks/useCreateAndNavigate.ts
 #: src/routes/History/HistoryDesktopView.tsx
 #: src/routes/History/HistoryMobileView.tsx
 #: src/views/Installation/AssignRights.tsx
@@ -1802,6 +1750,8 @@ msgstr "Title"
 msgid "Class"
 msgstr "Class"
 
+#: src/views/AgentPage.tsx
+#: src/views/AgentPage.tsx
 #: src/views/FolderPage/ListView.tsx
 msgid "Created"
 msgstr "Created"
@@ -1879,11 +1829,6 @@ msgid "Clear"
 msgstr "Clear"
 
 #: src/actions/resourceActions.tsx
-#: src/hooks/useAfterResourceDelete.ts
-msgid "Resource deleted!"
-msgstr "Resource deleted!"
-
-#: src/actions/resourceActions.tsx
 msgid "Normal View"
 msgstr "Normal View"
 
@@ -1901,11 +1846,13 @@ msgstr "View the resource and its properties in the Data View."
 
 #: src/actions/resourceActions.tsx
 #: src/components/Drives/FavoriteButton.tsx
+#: src/components/Presence/PresenceAvatarMenu.tsx
 msgid "Remove from favorites"
 msgstr "Remove from favorites"
 
 #: src/actions/resourceActions.tsx
 #: src/components/Drives/FavoriteButton.tsx
+#: src/components/Presence/PresenceAvatarMenu.tsx
 msgid "Add to favorites"
 msgstr "Add to favorites"
 
@@ -1941,24 +1888,8 @@ msgid "Usage instructions for how to fetch and use the resource in your code."
 msgstr "Usage instructions for how to fetch and use the resource in your code."
 
 #: src/actions/resourceActions.tsx
-msgid "Add to chat"
-msgstr "Add to chat"
-
-#: src/actions/resourceActions.tsx
-msgid "Add the resource as context to the AI sidebar"
-msgstr "Add the resource as context to the AI sidebar"
-
-#: src/actions/resourceActions.tsx
 msgid "Search children"
 msgstr "Search children"
-
-#: src/actions/resourceActions.tsx
-msgid "Permissions & Invites"
-msgstr "Permissions & Invites"
-
-#: src/actions/resourceActions.tsx
-msgid "Edit permissions and create invites."
-msgstr "Edit permissions and create invites."
 
 #: src/actions/resourceActions.tsx
 msgid "Show the history of this resource"
@@ -1971,10 +1902,6 @@ msgstr "Import Atomic Data to this resource"
 #: src/actions/resourceActions.tsx
 msgid "Confirm Delete"
 msgstr "Confirm Delete"
-
-#: src/actions/resourceActions.tsx
-msgid "Delete this resource."
-msgstr "Delete this resource."
 
 #. 0: ctx.resource.title
 #: src/components/ResourceContextMenu/index.tsx
@@ -2000,6 +1927,8 @@ msgstr "Edit value"
 
 #: src/components/SignInButton.tsx
 #: src/helpers/managed/cloudSync.ts
+#: src/routes/AuthorizeMcpRoute.tsx
+#: src/routes/ConnectAgentRoute.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 msgid "Sign in"
@@ -2065,10 +1994,6 @@ msgstr "folder"
 msgid "Open site"
 msgstr "Open site"
 
-#: src/components/AI/ChatLoadingIndicator.tsx
-msgid "Loading AI"
-msgstr "Loading AI"
-
 #: src/views/Installation/AssignRights.tsx
 msgid "Pick a resource"
 msgstr "Pick a resource"
@@ -2078,7 +2003,6 @@ msgid "Assign"
 msgstr "Assign"
 
 #: src/components/CodeBlock.tsx
-#: src/components/InviteForm.tsx
 msgid "Copied to clipboard"
 msgstr "Copied to clipboard"
 
@@ -2123,12 +2047,12 @@ msgid "Shortname"
 msgstr "Shortname"
 
 #: src/chunks/TablePage/PropertyForm/NewPropertyDialog.tsx
-#: src/components/InviteForm.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewArticleDialog.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewDashboardDialog.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewFormDialog.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewOntologyDialog.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewTableDialog.tsx
+#: src/views/Drive/DriveHome.tsx
 msgid "Create"
 msgstr "Create"
 
@@ -2206,8 +2130,6 @@ msgid "Add tag"
 msgstr "Add tag"
 
 #. 0: label
-#. 0: getTitle(resource)
-#: src/components/SideBar/DriveSwitcher.tsx
 #: src/components/SideBar/DriveSwitcher.tsx
 msgid "Switch to {0}"
 msgstr "Switch to {0}"
@@ -2229,7 +2151,7 @@ msgstr "Keyboard support for drag and drop is disabled. Enable it in the setting
 msgid "Picked up {0}"
 msgstr "Picked up {0}"
 
-#. 0: dragResource.title; 1: dropResource.title
+#. 0: dragResource.title; 1: describeTarget(over.data.current)
 #: src/components/SideBar/useSidebarDnd.ts
 msgid "Draggable item {0} was moved over droppable area in {1}"
 msgstr "Draggable item {0} was moved over droppable area in {1}"
@@ -2265,6 +2187,7 @@ msgstr "<0/> Note"
 #: src/components/NewInstanceButton/QuickCreateRow.tsx
 #: src/routes/IntegrationStore.tsx
 #: src/routes/SettingsAgent.tsx
+#: src/views/Drive/DriveHome.tsx
 msgid "New"
 msgstr "New"
 
@@ -2320,12 +2243,14 @@ msgstr "Revert"
 msgid "Accept Changes"
 msgstr "Accept Changes"
 
+#: src/actions/resourceActions.tsx
 #: src/components/MetaSetter.tsx
 #: src/components/NavBar.tsx
 #: src/components/NavBar.tsx
 msgid "Share"
 msgstr "Share"
 
+#: src/components/BreadCrumbs.tsx
 #: src/components/NavBar.tsx
 msgid "Breadcrumbs"
 msgstr "Breadcrumbs"
@@ -2362,6 +2287,7 @@ msgstr "Allow all writes done by this plugin"
 msgid "Deny"
 msgstr "Deny"
 
+#: src/components/ConnectAppForm.tsx
 #: src/views/PluginView/useRequestPermissionDialog.tsx
 msgid "Allow"
 msgstr "Allow"
@@ -2421,14 +2347,6 @@ msgstr "In Atomic Data, any Resource could have any single Property. Use this fi
 #: src/components/Drives/DrivesCard.tsx
 msgid "Nothing to show"
 msgstr "Nothing to show"
-
-#: src/components/InviteForm.tsx
-msgid "Allow edits"
-msgstr "Allow edits"
-
-#: src/components/InviteForm.tsx
-msgid "Invite created and copied to clipboard! 🚀"
-msgstr "Invite created and copied to clipboard! 🚀"
 
 #: src/routes/Share/AgentRights.tsx
 msgid "Read access. Toggle to remove access."
@@ -2502,10 +2420,6 @@ msgstr "none"
 #: src/views/OntologyPage/Class/ClassCardWrite.tsx
 msgid "Recommends"
 msgstr "Recommends"
-
-#: src/views/Article/ArticleDescription.tsx
-msgid "Content saved"
-msgstr "Content saved"
 
 #: src/components/forms/ValueForm/ValueFormEdit.tsx
 #: src/views/Article/ArticleDescription.tsx
@@ -2619,11 +2533,6 @@ msgstr "Generative features"
 msgid "{0} original value: {1}"
 msgstr "{0} original value: {1}"
 
-#: src/components/forms/ValueForm/ValueFormEdit.tsx
-#: src/components/forms/hooks/useSaveResource.ts
-msgid "Resource saved"
-msgstr "Resource saved"
-
 #: src/components/NewIdentitySection.tsx
 msgid "The secret is invalid. Make sure you copied it correctly."
 msgstr "The secret is invalid. Make sure you copied it correctly."
@@ -2695,24 +2604,6 @@ msgstr "Paste your secret here"
 msgid "Enter your Agent Secret"
 msgstr "Enter your Agent Secret"
 
-#~ msgid "Set your profile name!"
-#~ msgstr "Set your profile name!"
-
-#~ msgid "Others can read this. You can change this later."
-#~ msgstr "Others can read this. You can change this later."
-
-#~ msgid "Enter your name"
-#~ msgstr "Enter your name"
-
-#~ msgid "Profile Name"
-#~ msgstr "Profile Name"
-
-#~ msgid "Creating drive…"
-#~ msgstr "Creating drive…"
-
-#~ msgid "Save & continue"
-#~ msgstr "Save & continue"
-
 #: src/components/ResourceUsage/UsageCard.tsx
 msgid "Previous page"
 msgstr "Previous page"
@@ -2738,10 +2629,6 @@ msgstr "No User set - sign in first"
 msgid "Enter a subject"
 msgstr "Enter a subject"
 
-#: src/components/Template/ApplyTemplateDialog.tsx
-msgid "Template applied!"
-msgstr "Template applied!"
-
 #. 0: template.title
 #: src/components/Template/ApplyTemplateDialog.tsx
 msgid "Apply {0} template"
@@ -2764,6 +2651,7 @@ msgid "To large for preview"
 msgstr "To large for preview"
 
 #: src/views/OntologyPage/Property/PropertyFormCommon.tsx
+#: src/views/OntologyPage/Property/PropertyFormCommon.tsx
 msgid "Datatype"
 msgstr "Datatype"
 
@@ -2784,7 +2672,7 @@ msgstr "There are no tags yet."
 msgid "Open tag page"
 msgstr "Open tag page"
 
-#: src/chunks/FormBuilder/ShareLinkPanel.tsx
+#: src/components/ShareLink.tsx
 msgid "Link copied to clipboard"
 msgstr "Link copied to clipboard"
 
@@ -2908,7 +2796,7 @@ msgstr "Empty"
 #: src/components/AccountRecoveryCard.tsx
 #: src/components/LoroDocValue.tsx
 #: src/components/Share/PeopleWithAccess.tsx
-#: src/components/Vault/VaultStorage.tsx
+#: src/views/Drive/GettingStartedCard.tsx
 msgid "Hide"
 msgstr "Hide"
 
@@ -2942,6 +2830,8 @@ msgstr "This resource has <0/> children"
 msgid "Edit {0}"
 msgstr "Edit {0}"
 
+#: src/views/OntologyPage/NewPropertyButton.tsx
+#: src/views/OntologyPage/PropertyDatatypePicker.tsx
 #: src/views/OntologyPage/PropertyDatatypePicker.tsx
 msgid "Property datatype"
 msgstr "Property datatype"
@@ -3189,7 +3079,6 @@ msgid "No alt text"
 msgstr "No alt text"
 
 #: src/chunks/DashboardPage/BlockConfigDialog.tsx
-#: src/chunks/Demo/SimulatedTypist.ts
 #: src/chunks/FormBuilder/FieldOptions/InfoBoxOptions.tsx
 #: src/chunks/FormBuilder/FieldOptions/TableInputOptions.tsx
 #: src/chunks/TablePage/NewColumnButton.tsx
@@ -3231,10 +3120,8 @@ msgstr "Export table as CSV"
 msgid "Table filters"
 msgstr "Table filters"
 
-#: src/chunks/TablePage/DerivedColumnHeading.tsx
-#: src/chunks/TablePage/DerivedColumnHeading.tsx
-#: src/chunks/TablePage/RowActionHeading.tsx
-#: src/chunks/TablePage/RowActionHeading.tsx
+#: src/chunks/TablePage/ColumnSpecHeading.tsx
+#: src/chunks/TablePage/ColumnSpecHeading.tsx
 #: src/chunks/TablePage/TableHeading.tsx
 #: src/chunks/TablePage/TableHeading.tsx
 #: src/chunks/TablePage/TableHeading.tsx
@@ -3328,43 +3215,19 @@ msgstr "Open resource"
 msgid "Insufficient rights to view resource"
 msgstr "Insufficient rights to view resource"
 
-#: src/components/Searchbar/Searchbar.tsx
-msgid "Search (Cmd+K)"
-msgstr "Search (Cmd+K)"
-
-#. 0: title
-#: src/components/Searchbar/Searchbar.tsx
-msgid "in:{0}"
-msgstr "in:{0}"
-
-#: src/components/Searchbar/Searchbar.tsx
-msgid "Clear scope"
-msgstr "Clear scope"
-
-#: src/components/Searchbar/TagSuggestionOverlay.tsx
-msgid "No tags found"
-msgstr "No tags found"
-
-#: src/components/Searchbar/SearchbarInput.tsx
-msgid "Caret"
-msgstr "Caret"
-
-#: src/components/Searchbar/SearchbarInput.tsx
-msgid "Enter an Atomic URL or search  (press \"/\")"
-msgstr "Enter an Atomic URL or search  (press \"/\")"
-
 #: src/components/MetaSetter.tsx
 #: src/components/NavBar.tsx
 #: src/components/NavBar.tsx
-#: src/components/Searchbar/SearchbarInput.tsx
 msgid "Search"
 msgstr "Search"
 
 #: src/chunks/Templates/prepareTemplateDrive.ts
 #: src/chunks/Templates/prepareTemplateDrive.ts
+#: src/helpers/connectableDrives.ts
 #: src/helpers/managed/cloudSync.ts
 #: src/helpers/managed/prepareDriveSharing.ts
 #: src/helpers/managed/reconcile.ts
+#: src/helpers/managed/refusedDrive.ts
 msgid "Disabled"
 msgstr "Disabled"
 
@@ -3385,13 +3248,9 @@ msgstr "Document body"
 msgid "(empty)"
 msgstr "(empty)"
 
-#: src/routes/Search/SearchOverlay.tsx
+#: src/chunks/RTE/SlashMenu/CommandList.tsx
 msgid "Searching..."
 msgstr "Searching..."
-
-#: src/routes/Search/SearchOverlay.tsx
-msgid "<0/> open"
-msgstr "<0/> open"
 
 #: src/chunks/RTE/AIChatInput/AsyncAIChatInput.tsx
 msgid "Ask me anything, / for commands, @ for context"
@@ -3503,6 +3362,7 @@ msgid "Slug"
 msgstr "Slug"
 
 #: src/chunks/TablePage/PropertyForm/TextPropertyForm.tsx
+#: src/views/OntologyPage/Class/ClassConstraintSummary.tsx
 msgid "Length"
 msgstr "Length"
 
@@ -3564,6 +3424,7 @@ msgstr "Could not back up your secret. You can still save it yourself."
 msgid "Back up your secret?"
 msgstr "Back up your secret?"
 
+#: src/routes/SendIdentityRoute.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 msgid "Recovery password"
@@ -3587,7 +3448,6 @@ msgstr "Restore account"
 msgid "Enter the recovery password you set for {0}."
 msgstr "Enter the recovery password you set for {0}."
 
-#: src/components/Vault/VaultRestoreAction.tsx
 #: src/views/getting-started/ConnectDeviceStep.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 msgid "Restoring…"
@@ -3632,6 +3492,7 @@ msgid "Click to add a value"
 msgstr "Click to add a value"
 
 #: src/chunks/TablePage/TableViewTabs.tsx
+#: src/views/Drive/GettingStartedCard.tsx
 msgid "Rename"
 msgstr "Rename"
 
@@ -3676,11 +3537,6 @@ msgstr "Each row is a"
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewTableDialog.tsx
 msgid "Names the class of the rows — e.g. every row of an Employees table is an Employee."
 msgstr "Names the class of the rows — e.g. every row of an Employees table is an Employee."
-
-#: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewDriveDialog.tsx
-#: src/routes/NewDriveRoute.tsx
-msgid "Drive created"
-msgstr "Drive created"
 
 #: src/components/CommentsPanel/CommentsPanelContainer.tsx
 msgid "Open a resource to see its comments."
@@ -3795,11 +3651,6 @@ msgstr "Are you sure you've stored this secret somewhere safe? You cannot recove
 msgid "You have been signed out to verify that you saved your secret. Enter it below to sign in."
 msgstr "You have been signed out to verify that you saved your secret. Enter it below to sign in."
 
-#. 0: classTitle
-#: src/hooks/useCreateAndNavigate.ts
-msgid "{0} created"
-msgstr "{0} created"
-
 #. 0: DEV_DRIVE_PRUNE_MARKER
 #: src/hooks/useDevDrive.ts
 msgid ""
@@ -3823,12 +3674,6 @@ msgstr "This removes drives created for automated tests or local dev: names cont
 #: src/views/ResourcePage.tsx
 msgid "The resource at <0/> hasn't loaded after 15 seconds. It may not exist, or the server may be unreachable."
 msgstr "The resource at <0/> hasn't loaded after 15 seconds. It may not exist, or the server may be unreachable."
-
-#~ msgid "Accept as"
-#~ msgstr "Accept as"
-
-#~ msgid "IMPORTANT! Below is your agent secret, you use this to login. Save it somewhere safe, the secret will not be show again and if you lose it you will not be able to access this user again."
-#~ msgstr "IMPORTANT! Below is your agent secret, you use this to login. Save it somewhere safe, the secret will not be show again and if you lose it you will not be able to access this user again."
 
 #: src/chunks/AI/AISetupPanel.tsx
 msgid "This pre-selects a model for built-in agents and new custom agents. You can change each agent's model individually later."
@@ -3903,10 +3748,6 @@ msgstr "OpenRouter provides a unified API that gives you access to hundreds of A
 msgid "The generative features model uses a provider that is not available."
 msgstr "The generative features model uses a provider that is not available."
 
-#: src/routes/Share/ShareRoute.tsx
-msgid "Create Invite"
-msgstr "Create Invite"
-
 #. 0: status.blockedCount
 #: src/components/SideBar/syncStatus.tsx
 msgid "{0} changes could not sync (no access)"
@@ -3917,7 +3758,7 @@ msgstr "{0} changes could not sync (no access)"
 msgid "{0} changes pending"
 msgstr "{0} changes pending"
 
-#. 0: dragResource.title; 1: dropResource.title
+#. 0: dragResource.title; 1: describeTarget(over.data.current)
 #: src/components/SideBar/useSidebarDnd.ts
 msgid "{0} was moved to {1}"
 msgstr "{0} was moved to {1}"
@@ -3947,7 +3788,7 @@ msgstr "Tap <0>Undo</0> / <1>Redo</1> to step through edits; drag the undo butto
 msgid "Hold the undo button to see versions you abandoned by drawing after an undo; drag over one and release to restore it"
 msgstr "Hold the undo button to see versions you abandoned by drawing after an undo; drag over one and release to restore it"
 
-#: src/views/Drive/DrivePage.tsx
+#: src/views/Drive/DriveSettingsDialog.tsx
 msgid "A short description given to the AI Agent, use this to tell it what this drive is about, link important resources etc."
 msgstr "A short description given to the AI Agent, use this to tell it what this drive is about, link important resources etc."
 
@@ -4039,22 +3880,6 @@ msgstr "End meeting"
 msgid "Start meeting"
 msgstr "Start meeting"
 
-#: src/routes/DemoRoute.tsx
-msgid "Could not start the demo"
-msgstr "Could not start the demo"
-
-#: src/routes/DemoRoute.tsx
-msgid "The demo could not start"
-msgstr "The demo could not start"
-
-#: src/chunks/Demo/SimulatedTypist.ts
-msgid "Map"
-msgstr "Map"
-
-#: src/chunks/Demo/SimulatedTypist.ts
-msgid "List"
-msgstr "List"
-
 #. 0: new Date().toLocaleString(undefined, { month\\: 'short', day\\: 'numeric', hour\\: '2-digit', minute\\: '2-digit', })
 #: src/components/Presence/FollowContext.tsx
 msgid "Meeting · {0}"
@@ -4075,6 +3900,7 @@ msgstr "Chat and the log of resources visited during the meeting."
 msgid "End"
 msgstr "End"
 
+#: src/actions/resourceActions.tsx
 #: src/components/Presence/FollowSessionPanelContainer.tsx
 msgid "Leave"
 msgstr "Leave"
@@ -4103,14 +3929,6 @@ msgstr "Join {0} — led by {1}"
 msgid "Join"
 msgstr "Join"
 
-#: src/views/getting-started/GettingStartedFlow.tsx
-msgid "Try the live demo"
-msgstr "Try the live demo"
-
-#: src/routes/DemoRoute.tsx
-msgid "The demo needs the local database, which is disabled in this browser. Enable it on the Sync page and try again."
-msgstr "The demo needs the local database, which is disabled in this browser. Enable it on the Sync page and try again."
-
 #. 0: name
 #: src/components/Presence/AgentAvatar.tsx
 msgid "{0} is online"
@@ -4129,9 +3947,9 @@ msgid "Could not copy — select and copy the code manually."
 msgstr "Could not copy — select and copy the code manually."
 
 #: src/chunks/AppPage/ConnectDialog.tsx
+#: src/components/ConnectDevice.tsx
 #: src/components/ConnectServerDialog.tsx
 #: src/components/ConnectToDeviceForm.tsx
-#: src/routes/SyncRoute.tsx
 #: src/views/getting-started/ConnectDeviceStep.tsx
 msgid "Connect"
 msgstr "Connect"
@@ -4155,10 +3973,6 @@ msgid "Private drive"
 msgstr "Private drive"
 
 #: src/components/SideBar/DriveSwitcher.tsx
-msgid "Manage drives"
-msgstr "Manage drives"
-
-#: src/components/SideBar/DriveSwitcher.tsx
 msgid "View and organize all your drives."
 msgstr "View and organize all your drives."
 
@@ -4173,11 +3987,6 @@ msgstr "Only stored on this device. Star a drive to keep it in My drives."
 #: src/routes/SettingsAgent.tsx
 msgid "Recently visited"
 msgstr "Recently visited"
-
-#: src/routes/DemoRoute.tsx
-#: src/routes/DemoRoute.tsx
-msgid "Setting up your demo…"
-msgstr "Setting up your demo…"
 
 #. 0: status.lastDriveSync.count.toLocaleString()
 #: src/routes/SyncRoute.tsx
@@ -4196,15 +4005,8 @@ msgstr "Cached locally · works offline"
 msgid "Server-only · no local cache"
 msgstr "Server-only · no local cache"
 
-#. 0: usagePct
-#: src/routes/SyncRoute.tsx
-msgid "{0}% of storage used"
-msgstr "{0}% of storage used"
-
-#. 0: Math.min(100, Math.round(percent))
-#. 0: usagePct
-#: src/components/Vault/VaultPanel.tsx
-#: src/routes/SyncRoute.tsx
+#. 0: percent
+#: src/components/Cloud/UsageMeter.tsx
 msgid "{0}% used"
 msgstr "{0}% used"
 
@@ -4247,16 +4049,8 @@ msgid "Connecting…"
 msgstr "Connecting…"
 
 #: src/routes/SyncRoute.tsx
-msgid "Sync this workspace"
-msgstr "Sync this workspace"
-
-#: src/routes/SyncRoute.tsx
 msgid "Only on this device"
 msgstr "Only on this device"
-
-#: src/routes/SyncRoute.tsx
-msgid "This workspace hasn’t been synced. It’s safe here, but not backed up and not on your other devices."
-msgstr "This workspace hasn’t been synced. It’s safe here, but not backed up and not on your other devices."
 
 #: src/components/ConnectToDeviceForm.tsx
 msgid "Camera access is needed to scan a code."
@@ -4300,8 +4094,9 @@ msgstr "Pairing device"
 
 #: src/chunks/AI/RealAIChat.tsx
 #: src/chunks/PluginRuns/WorkspaceControls.tsx
+#: src/components/SyncProblemBanner.tsx
+#: src/components/Vault/VaultRestoreAction.tsx
 #: src/components/pairing/PairingFlowProvider.tsx
-#: src/routes/DemoRoute.tsx
 #: src/routes/SyncRoute.tsx
 msgid "Try again"
 msgstr "Try again"
@@ -4316,8 +4111,8 @@ msgstr "Open workspace"
 #: src/chunks/PluginRuns/RunPluginDialog.tsx
 #: src/chunks/TablePage/Issues/IssueRow.tsx
 #: src/components/SideBar/FeedbackButton.tsx
+#: src/components/Vault/VaultStorage.tsx
 #: src/components/pairing/PairingFlowProvider.tsx
-#: src/routes/NewDriveRoute.tsx
 msgid "Close"
 msgstr "Close"
 
@@ -4357,10 +4152,6 @@ msgstr "Paired with {0}"
 msgid "Synced {0} {1} with {2}"
 msgstr "Synced {0} {1} with {2}"
 
-#: src/routes/SyncRoute.tsx
-msgid "Show this code"
-msgstr "Show this code"
-
 #: src/components/pairing/PairingFlowProvider.tsx
 msgid "This device can’t tell which workspace to open. Open the app on your other device, then pair again."
 msgstr "This device can’t tell which workspace to open. Open the app on your other device, then pair again."
@@ -4392,10 +4183,6 @@ msgstr "Skip anyway"
 #: src/actions/resourceActions.tsx
 msgid "Open original"
 msgstr "Open original"
-
-#: src/helpers/draftsFolder.ts
-msgid "Drafts"
-msgstr "Drafts"
 
 #: src/helpers/forksFolder.ts
 msgid "Work in progress. Resources here are visible to people who can write to this drive, and are published by moving them somewhere publicly readable."
@@ -4439,11 +4226,6 @@ msgstr "Meeting"
 msgid "Open chat"
 msgstr "Open chat"
 
-#: src/views/Meeting/MeetingPage.tsx
-#: src/views/Meeting/MeetingPage.tsx
-msgid "Loading meeting notes…"
-msgstr "Loading meeting notes…"
-
 #: src/components/Presence/FollowSessionPanelContainer.tsx
 msgid "Notes"
 msgstr "Notes"
@@ -4457,21 +4239,12 @@ msgid "Fork this resource. The original is untouched until you merge the fork ba
 msgstr "Fork this resource. The original is untouched until you merge the fork back."
 
 #: src/actions/resourceActions.tsx
-msgid "Fork created"
-msgstr "Fork created"
-
-#: src/actions/resourceActions.tsx
 msgid "Merge fork"
 msgstr "Merge fork"
 
 #: src/actions/resourceActions.tsx
 msgid "Write this fork onto the resource it was forked from, as a single commit."
 msgstr "Write this fork onto the resource it was forked from, as a single commit."
-
-#: src/actions/resourceActions.tsx
-#: src/components/ForkBar.tsx
-msgid "Fork merged"
-msgstr "Fork merged"
 
 #: src/actions/resourceActions.tsx
 msgid "Open the resource this fork was forked from."
@@ -4481,10 +4254,6 @@ msgstr "Open the resource this fork was forked from."
 #: src/components/ForkBar.tsx
 msgid "{0} propert{1} also changed on the original since this fork was made ({2}). Merging will overwrite {3} with this fork's version. Continue?"
 msgstr "{0} propert{1} also changed on the original since this fork was made ({2}). Merging will overwrite {3} with this fork's version. Continue?"
-
-#: src/components/ForkBar.tsx
-msgid "Fork discarded"
-msgstr "Fork discarded"
 
 #: src/components/ForkBar.tsx
 msgid "Fork of"
@@ -4498,10 +4267,6 @@ msgstr "{0} forks propose changes to this:"
 #: src/helpers/forksFolder.ts
 msgid "Forks"
 msgstr "Forks"
-
-#: src/helpers/draftsFolder.ts
-msgid "Unpublished new content. Resources here are visible to people who can write to this drive; publish one by moving it somewhere publicly readable."
-msgstr "Unpublished new content. Resources here are visible to people who can write to this drive; publish one by moving it somewhere publicly readable."
 
 #: src/routes/AppSettings.tsx
 msgid "Virtual drive"
@@ -4526,19 +4291,14 @@ msgstr "Open in file manager"
 msgid "Mounted at {0}"
 msgstr "Mounted at {0}"
 
-#: src/chunks/FormBuilder/ShareLinkPanel.tsx
 #: src/components/Settings/VirtualDriveSettings.tsx
+#: src/components/ShareLink.tsx
 msgid "<0/> Open"
 msgstr "<0/> Open"
 
 #: src/components/Settings/VirtualDriveSettings.tsx
 msgid "Mount your Atomic drives as a folder on this computer. Your files, folders and documents show up in your file manager, and changes you make there sync back."
 msgstr "Mount your Atomic drives as a folder on this computer. Your files, folders and documents show up in your file manager, and changes you make there sync back."
-
-#. 0: serverLabel(server)
-#: src/routes/SyncRoute.tsx
-msgid "Switching to {0}…"
-msgstr "Switching to {0}…"
 
 #: src/routes/SyncRoute.tsx
 msgid "Node ID copied"
@@ -4553,13 +4313,9 @@ msgstr "Copy {0}"
 msgid "Your data lives on the device you’re connected to."
 msgstr "Your data lives on the device you’re connected to."
 
-#: src/routes/SyncRoute.tsx
-#: src/routes/SyncRoute.tsx
-msgid "Syncing this workspace…"
-msgstr "Syncing this workspace…"
-
+#: src/components/ConnectDevice.tsx
 #: src/components/ConnectServerDialog.tsx
-#: src/routes/SyncRoute.tsx
+#: src/components/SyncProblemBanner.tsx
 #: src/routes/SyncRoute.tsx
 msgid "Connect a device"
 msgstr "Connect a device"
@@ -4583,23 +4339,6 @@ msgstr "Always-on · in use"
 #: src/routes/SyncRoute.tsx
 msgid "Always-on device"
 msgstr "Always-on device"
-
-#: src/routes/SyncRoute.tsx
-msgid "Codes only route — your key still decides what syncs. Show yours, or take theirs."
-msgstr "Codes only route — your key still decides what syncs. Show yours, or take theirs."
-
-#. 0: serverLabel(status.serverUrl ?? '')
-#: src/routes/SyncRoute.tsx
-msgid "Scan from your other device to sync with {0}. Safe to show: a code only routes."
-msgstr "Scan from your other device to sync with {0}. Safe to show: a code only routes."
-
-#: src/routes/SyncRoute.tsx
-msgid "Or scan theirs"
-msgstr "Or scan theirs"
-
-#: src/routes/SyncRoute.tsx
-msgid "Or paste theirs"
-msgstr "Or paste theirs"
 
 #: src/views/getting-started/ConnectDeviceStep.tsx
 msgid "Scan this from that device"
@@ -4680,8 +4419,10 @@ msgid "Languages"
 msgstr "Languages"
 
 #. 0: tag
+#. 0: url
 #. 0: email
 #: src/components/EditLanguagesDialog.tsx
+#: src/components/Settings/IntegrationSettings.tsx
 #: src/components/Share/EmailInviteInput.tsx
 msgid "Remove {0}"
 msgstr "Remove {0}"
@@ -4699,16 +4440,18 @@ msgstr "This property is server-managed and cannot be edited."
 msgid "Local storage is off, so this server is the only data source. Enable local storage below to work disconnected."
 msgstr "Local storage is off, so this server is the only data source. Enable local storage below to work disconnected."
 
-#: src/chunks/Templates/DriveTemplateSetup.tsx
+#: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewDriveDialog.tsx
 msgid "Creating…"
 msgstr "Creating…"
 
-#: src/chunks/Templates/DriveTemplateSetup.tsx
+#: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewDriveDialog.tsx
 msgid "Create drive"
 msgstr "Create drive"
 
 #: src/components/MetaSetter.tsx
 #: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewDriveDialog.tsx
+#: src/routes/NewDriveRoute.tsx
+#: src/views/Drive/GettingStartedCard.tsx
 msgid "New drive"
 msgstr "New drive"
 
@@ -4809,7 +4552,6 @@ msgstr "Remove icon"
 msgid "Pick an emoji or image shown next to this resource wherever it appears."
 msgstr "Pick an emoji or image shown next to this resource wherever it appears."
 
-#: src/chunks/EmojiInput/EmojiInput.tsx
 #: src/components/ResourceDecorations.tsx
 msgid "<0/> Upload image"
 msgstr "<0/> Upload image"
@@ -4819,7 +4561,6 @@ msgstr "<0/> Upload image"
 msgid "Could not display \"{0}\" — it may not be a supported image format"
 msgstr "Could not display \"{0}\" — it may not be a supported image format"
 
-#: src/chunks/EmojiInput/EmojiInput.tsx
 #: src/components/ResourceDecorations.tsx
 msgid "<0/> Pick existing"
 msgstr "<0/> Pick existing"
@@ -4839,6 +4580,10 @@ msgstr "Enter the recovery code you saved for {0}."
 
 #: src/components/AccountRecoveryCard.tsx
 #: src/components/AccountRecoveryCard.tsx
+#: src/components/AccountRecoveryCard.tsx
+#: src/components/AccountRecoveryCard.tsx
+#: src/routes/SendIdentityRoute.tsx
+#: src/routes/SendIdentityRoute.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 msgid "Recovery code"
@@ -4881,9 +4626,11 @@ msgid "Passkey added {0}"
 msgstr "Passkey added {0}"
 
 #: src/helpers/managed/recovery.ts
+#: src/helpers/managed/recovery.ts
 msgid "That passkey could not unlock this backup."
 msgstr "That passkey could not unlock this backup."
 
+#: src/helpers/managed/recovery.ts
 #: src/helpers/managed/recovery.ts
 msgid "Wrong recovery code"
 msgstr "Wrong recovery code"
@@ -4898,6 +4645,7 @@ msgid "Checking what this device supports…"
 msgstr "Checking what this device supports…"
 
 #: src/components/NewIdentitySection.tsx
+#: src/routes/SendIdentityRoute.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
@@ -4920,6 +4668,7 @@ msgstr "Atomic account"
 msgid "Could not unlock with your passkey."
 msgstr "Could not unlock with your passkey."
 
+#: src/routes/SendIdentityRoute.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 #: src/views/getting-started/GettingStartedFlow.tsx
 msgid "Unlock with your passkey"
@@ -4947,6 +4696,7 @@ msgstr "Could not show your secret."
 
 #: src/components/AccountRecoveryCard.tsx
 #: src/components/AccountRecoveryCard.tsx
+#: src/routes/SendIdentityRoute.tsx
 msgid "Unlocking…"
 msgstr "Unlocking…"
 
@@ -5147,6 +4897,7 @@ msgstr "One at a time"
 msgid "Stop the running entry when another starts"
 msgstr "Stop the running entry when another starts"
 
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
 #: src/chunks/TablePage/Timer/useTimerColumns.tsx
 msgid "Duration"
 msgstr "Duration"
@@ -5204,23 +4955,6 @@ msgstr "Edit computed column"
 #: src/chunks/TablePage/DerivedColumnDialog.tsx
 msgid "New computed column"
 msgstr "New computed column"
-
-#: src/chunks/TablePage/DerivedColumnDialog.tsx
-msgid "Computes"
-msgstr "Computes"
-
-#: src/chunks/TablePage/DerivedColumnDialog.tsx
-msgid "Choose a column…"
-msgstr "Choose a column…"
-
-#: src/chunks/TablePage/DerivedColumnDialog.tsx
-msgid "A fixed number…"
-msgstr "A fixed number…"
-
-#. 0: arg.accepts === 'instant' ? 'date' \\: 'number'
-#: src/chunks/TablePage/DerivedColumnDialog.tsx
-msgid "This table has no {0} column to use here yet."
-msgstr "This table has no {0} column to use here yet."
 
 #: src/chunks/FormBuilder/FieldOptions/MatrixOptions.tsx
 #: src/chunks/TablePage/DerivedColumnDialog.tsx
@@ -5431,16 +5165,11 @@ msgstr "Pick a number and something to group it by"
 msgid "No data yet"
 msgstr "No data yet"
 
-#~ msgid "Showing the largest"
-#~ msgstr "Showing the largest"
-
-#~ msgid "groups"
-#~ msgstr "groups"
-
 #: src/chunks/TablePage/CellSelectionMenu.tsx
 #: src/chunks/TablePage/CellSelectionMenu.tsx
 #: src/chunks/TablePage/QuickAddFields.tsx
 #: src/chunks/TablePage/rowActions.ts
+#: src/views/OntologyPage/Class/ClassConstraintSummary.tsx
 msgid "Value"
 msgstr "Value"
 
@@ -5750,7 +5479,9 @@ msgstr "Not connected"
 msgid "Switch"
 msgstr "Switch"
 
+#. 0: accountAddress(phase.account)
 #. 0: managedAccount.email
+#: src/routes/SendIdentityRoute.tsx
 #: src/routes/SyncRoute.tsx
 msgid "Signed in as {0}."
 msgstr "Signed in as {0}."
@@ -5760,14 +5491,22 @@ msgid "Email recovery"
 msgstr "Email recovery"
 
 #. 0: count
+#. 0: usage.resourceCount.toLocaleString()
 #. 0: nodeUsage.resourceCount.toLocaleString()
 #: src/chunks/AI/AIChatMessageParts/MessageToolPart.tsx
+#: src/components/Cloud/CloudServerDetails.tsx
 #: src/routes/SyncRoute.tsx
 msgid "{0} resources"
 msgstr "{0} resources"
 
 #. 0: formatBytes(usedBytes); 1: formatBytes(quotaBytes)
+#. 0: progress.done; 1: progress.total
+#. 0: formatBytes(usedBytes); 1: formatBytes(quotaBytes)
+#. 0: doneCount; 1: steps.length
+#: src/components/Cloud/UsageMeter.tsx
+#: src/components/DatabaseUpgradeNotice.tsx
 #: src/routes/SyncRoute.tsx
+#: src/views/Drive/GettingStartedCard.tsx
 msgid "{0} of {1}"
 msgstr "{0} of {1}"
 
@@ -5785,14 +5524,6 @@ msgid "Synced just now"
 msgstr "Synced just now"
 
 #: src/routes/SyncRoute.tsx
-msgid "Open a workspace to see whether it can be hosted."
-msgstr "Open a workspace to see whether it can be hosted."
-
-#: src/routes/SyncRoute.tsx
-msgid "This device doesn’t have this workspace yet. Pair the device that does, and you can host it from here."
-msgstr "This device doesn’t have this workspace yet. Pair the device that does, and you can host it from here."
-
-#: src/routes/SyncRoute.tsx
 msgid "This server"
 msgstr "This server"
 
@@ -5800,10 +5531,6 @@ msgstr "This server"
 #: src/routes/SyncRoute.tsx
 msgid "{0} doesn’t offer hosting, so it can’t be switched on from here."
 msgstr "{0} doesn’t offer hosting, so it can’t be switched on from here."
-
-#: src/routes/SyncRoute.tsx
-msgid "Checking whether this workspace is hosted…"
-msgstr "Checking whether this workspace is hosted…"
 
 #: src/components/Vault/VaultPanel.tsx
 msgid "Checking this workspace’s backup…"
@@ -5845,11 +5572,6 @@ msgstr "Sign in →"
 #: src/routes/SyncRoute.tsx
 msgid "{0}. We hold your key sealed, so this email gets you back in on a new device."
 msgstr "{0}. We hold your key sealed, so this email gets you back in on a new device."
-
-#. 0: managedAccount.email
-#: src/routes/SyncRoute.tsx
-msgid "{0}. No recovery backup stored, so losing every device loses this workspace."
-msgstr "{0}. No recovery backup stored, so losing every device loses this workspace."
 
 #: src/routes/SyncRoute.tsx
 msgid "Set up email recovery"
@@ -5922,14 +5644,6 @@ msgstr "Store it with {0}"
 msgid "{0}. Your backup is sealed in this browser and nowhere else, so it unlocks here but a new device could not get you back in."
 msgstr "{0}. Your backup is sealed in this browser and nowhere else, so it unlocks here but a new device could not get you back in."
 
-#: src/routes/SyncRoute.tsx
-msgid "An always-on device has an address. One you carry has a code instead, shown below."
-msgstr "An always-on device has an address. One you carry has a code instead, shown below."
-
-#: src/routes/SyncRoute.tsx
-msgid "An always-on device has an address. Type it here."
-msgstr "An always-on device has an address. Type it here."
-
 #. 0: detail
 #: src/actions/resourceActions.tsx
 msgid "Could not delete: {0}"
@@ -5938,10 +5652,6 @@ msgstr "Could not delete: {0}"
 #: src/views/getting-started/GettingStartedFlow.tsx
 msgid "This server is run by one person for their own data. You can sign in, or open a drive you were invited to."
 msgstr "This server is run by one person for their own data. You can sign in, or open a drive you were invited to."
-
-#: src/handlers/errorHandler.ts
-msgid "Something failed, and reported no reason."
-msgstr "Something failed, and reported no reason."
 
 #: src/views/Drive/DrivePage.tsx
 msgid "Your private drive keeps its name. It is tied to your account, not to a project."
@@ -5979,10 +5689,6 @@ msgstr "Open a drive by URL"
 #: src/routes/SettingsAgent.tsx
 msgid "Open a drive by URL or DID"
 msgstr "Open a drive by URL or DID"
-
-#: src/components/Vault/VaultRestoreAction.tsx
-msgid "This workspace has an encrypted backup in Cloud Vault."
-msgstr "This workspace has an encrypted backup in Cloud Vault."
 
 #: src/components/Vault/VaultRestoreAction.tsx
 msgid "Restore from Cloud Vault"
@@ -6195,32 +5901,12 @@ msgid "Could not set up Cloud Server."
 msgstr "Could not set up Cloud Server."
 
 #: src/routes/SyncRoute.tsx
-msgid "Cloud Server received this workspace. Your source server is still connected."
-msgstr "Cloud Server received this workspace. Your source server is still connected."
-
-#: src/routes/SyncRoute.tsx
-msgid "Connected to Cloud Server. Syncing this workspace…"
-msgstr "Connected to Cloud Server. Syncing this workspace…"
-
-#: src/routes/SyncRoute.tsx
 msgid "Use Cloud Server"
 msgstr "Use Cloud Server"
 
 #: src/routes/SyncRoute.tsx
 msgid "See plans"
 msgstr "See plans"
-
-#~ msgid "<0>Local:</0> data stays on your devices unless you connect a service or share it."
-#~ msgstr "<0>Local:</0> data stays on your devices unless you connect a service or share it."
-
-#~ msgid "<0>Cloud Vault:</0> an encrypted backup that the provider cannot read. It does not host your workspace."
-#~ msgstr "<0>Cloud Vault:</0> an encrypted backup that the provider cannot read. It does not host your workspace."
-
-#~ msgid "<0>Cloud Server:</0> you agree to us storing and processing a readable copy of this drive to provide hosting. Your sharing permissions still control other users’ access."
-#~ msgstr "<0>Cloud Server:</0> you agree to us storing and processing a readable copy of this drive to provide hosting. Your sharing permissions still control other users’ access."
-
-#~ msgid "Agree and enable Cloud Server"
-#~ msgstr "Agree and enable Cloud Server"
 
 #: src/components/SideBar/DriveSwitcher.tsx
 msgid "Switch to your personal drive."
@@ -6345,6 +6031,7 @@ msgid "Add class"
 msgstr "Add class"
 
 #: src/routes/History/VersionTitle.tsx
+#: src/views/Drive/DriveHome.tsx
 msgid "Edited"
 msgstr "Edited"
 
@@ -6373,6 +6060,7 @@ msgstr "Preparing file…"
 msgid "Could not prepare file. Select it again to retry."
 msgstr "Could not prepare file. Select it again to retry."
 
+#: src/actions/resourceActions.tsx
 #: src/components/Vault/VaultPanel.tsx
 msgid "Restore"
 msgstr "Restore"
@@ -6487,18 +6175,6 @@ msgstr "Picture ready to save."
 #: src/components/ProfileForm.tsx
 msgid "How your colleagues see you"
 msgstr "How your colleagues see you"
-
-#~ msgid "Use your full name and a picture so people recognize you. This updates your Atomic profile wherever you collaborate."
-#~ msgstr "Use your full name and a picture so people recognize you. This updates your Atomic profile wherever you collaborate."
-
-#~ msgid "You can add or change your picture later in your profile."
-#~ msgstr "You can add or change your picture later in your profile."
-
-#~ msgid "Your Cloud Server subscription is active"
-#~ msgstr "Your Cloud Server subscription is active"
-
-#~ msgid "Your Cloud Server trial is active"
-#~ msgstr "Your Cloud Server trial is active"
 
 #: src/components/ProfileForm.tsx
 msgid "Profile picture (optional)"
@@ -6629,11 +6305,6 @@ msgstr "Could not unlock with a passkey. Use your recovery code instead."
 msgid "Error: Sign in before syncing with another device"
 msgstr "Error: Sign in before syncing with another device"
 
-#. 0: PRODUCT_NAME
-#: src/routes/SyncRoute.tsx
-msgid "Sign in to your {0} account to check email recovery. Signing in to this workspace with a passkey or secret does not by itself connect your cloud account."
-msgstr "Sign in to your {0} account to check email recovery. Signing in to this workspace with a passkey or secret does not by itself connect your cloud account."
-
 #: src/routes/SyncRoute.tsx
 msgid "Sign in to check recovery"
 msgstr "Sign in to check recovery"
@@ -6747,7 +6418,6 @@ msgstr "Looking for the inviter’s browser…"
 msgid "Sign in to join"
 msgstr "Sign in to join"
 
-#: src/chunks/Templates/DriveTemplateSetup.tsx
 #: src/views/PeerInvitePage.tsx
 msgid "Open drive"
 msgstr "Open drive"
@@ -6850,6 +6520,7 @@ msgstr "Use {0} template"
 #: src/chunks/PluginRuns/PluginRunHistory.tsx
 #: src/components/AppSetup/AppSetupForm.tsx
 #: src/routes/NewResource/NewRoute.tsx
+#: src/routes/SendIdentityRoute.tsx
 msgid "Loading…"
 msgstr "Loading…"
 
@@ -6886,104 +6557,29 @@ msgstr "Ask AI"
 msgid "<0/> Loading"
 msgstr "<0/> Loading"
 
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-#: src/chunks/Templates/DriveTemplateSetup.tsx
+#: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewDriveDialog.tsx
 msgid "My drive"
 msgstr "My drive"
 
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "The drive was created, but setup did not finish. Open it to inspect what was saved."
-msgstr "The drive was created, but setup did not finish. Open it to inspect what was saved."
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
+#: src/components/forms/NewForm/CustomCreateActions/CustomForms/NewDriveDialog.tsx
 msgid "Drive name"
 msgstr "Drive name"
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-#: src/components/DemoExitButton.tsx
-#: src/routes/NewDriveRoute.tsx
-msgid "Back to templates"
-msgstr "Back to templates"
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "Give your space a name"
-msgstr "Give your space a name"
-
-#. 0: template.title
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "{0} contents"
-msgstr "{0} contents"
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "Preparing…"
-msgstr "Preparing…"
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "Preview template"
-msgstr "Preview template"
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "Prefer a fresh start?"
-msgstr "Prefer a fresh start?"
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "Create a blank drive"
-msgstr "Create a blank drive"
-
-#: src/components/DemoExitButton.tsx
-msgid "Use this template"
-msgstr "Use this template"
 
 #: src/chunks/Templates/TemplateChat.tsx
 msgid "Atomic"
 msgstr "Atomic"
 
 #: src/chunks/Templates/TemplateChat.tsx
-msgid "Or, tell Atomic what you need"
-msgstr "Or, tell Atomic what you need"
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "<0/> Include example content"
-msgstr "<0/> Include example content"
-
-#: src/chunks/Templates/TemplateChat.tsx
 msgid "Loading chat…"
 msgstr "Loading chat…"
 
-#: src/chunks/Templates/TemplateChat.tsx
-msgid "Nothing is created until you review it."
-msgstr "Nothing is created until you review it."
-
-#: src/chunks/Templates/TemplateChat.tsx
-msgid "Review this setup"
-msgstr "Review this setup"
-
-#: src/chunks/Templates/TemplateChat.tsx
-#: src/chunks/Templates/TemplateChat.tsx
+#: src/views/Drive/GettingStartedCard.tsx
 msgid "Set up AI"
 msgstr "Set up AI"
 
-#: src/chunks/Templates/TemplateChat.tsx
 #: src/components/AI/AISettings.tsx
 msgid "Loading AI settings…"
 msgstr "Loading AI settings…"
-
-#: src/routes/NewDriveRoute.tsx
-msgid "Could not open the preview. Please refresh."
-msgstr "Could not open the preview. Please refresh."
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "/app/new-drive?blank=1"
-msgstr "/app/new-drive?blank=1"
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "<0/> Keep demo content and my edits"
-msgstr "<0/> Keep demo content and my edits"
-
-#. 0: ' '
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "Start with a template,{0} <0>create a blank drive</0> , or describe a space of your own."
-msgstr "Start with a template,{0} <0>create a blank drive</0> , or describe a space of your own."
 
 #: src/actions/resourceActions.tsx
 #: src/chunks/PluginRuns/PluginPage.tsx
@@ -7008,11 +6604,6 @@ msgstr "Could not apply: {0}"
 #: src/chunks/PluginRuns/RunPluginDialog.tsx
 msgid "Applied {0}, {1} failed"
 msgstr "Applied {0}, {1} failed"
-
-#. 0: report.applied
-#: src/chunks/PluginRuns/RunPluginDialog.tsx
-msgid "Applied {0} changes"
-msgstr "Applied {0} changes"
 
 #: src/chunks/PluginRuns/RunPluginDialog.tsx
 msgid "Applying…"
@@ -7048,11 +6639,6 @@ msgstr "{0} applied"
 #: src/chunks/PluginRuns/PluginRunHistory.tsx
 msgid "{0} failed"
 msgstr "{0} failed"
-
-#. 0: secret.name
-#: src/chunks/PluginRuns/PluginSecrets.tsx
-msgid "Stored {0}"
-msgstr "Stored {0}"
 
 #: src/chunks/PluginRuns/PluginSecrets.tsx
 msgid "<0/> Secrets"
@@ -7199,16 +6785,6 @@ msgstr "Fix it"
 msgid "Dismiss"
 msgstr "Dismiss"
 
-#: src/components/MetaSetter.tsx
-#: src/components/SideBar/AccountMenu.tsx
-#: src/routes/IntegrationStore.tsx
-msgid "Integrations"
-msgstr "Integrations"
-
-#: src/components/SideBar/AccountMenu.tsx
-msgid "Discover published integrations"
-msgstr "Discover published integrations"
-
 #: src/chunks/PluginRuns/PluginSchedule.tsx
 msgid "Review the saved proposal and run history before continuing."
 msgstr "Review the saved proposal and run history before continuing."
@@ -7216,14 +6792,6 @@ msgstr "Review the saved proposal and run history before continuing."
 #: src/chunks/PluginRuns/PluginSchedule.tsx
 msgid "Resume saved run"
 msgstr "Resume saved run"
-
-#: src/routes/IntegrationStore.tsx
-msgid "Search integrations"
-msgstr "Search integrations"
-
-#: src/routes/IntegrationStore.tsx
-msgid "Search integrations, domains or standards"
-msgstr "Search integrations, domains or standards"
 
 #: src/routes/IntegrationStore.tsx
 msgid "Linked standards"
@@ -7410,10 +6978,6 @@ msgstr "Automation name"
 #: src/chunks/PluginRuns/CreateEventAutomation.tsx
 msgid "The next screen opens an editable JavaScript starter. Automatic execution stays off until you enable it."
 msgstr "The next screen opens an editable JavaScript starter. Automatic execution stays off until you enable it."
-
-#: src/routes/IntegrationStore.tsx
-msgid "Connect your apps and keep your work in sync. Add automations when you need them."
-msgstr "Connect your apps and keep your work in sync. Add automations when you need them."
 
 #: src/chunks/PluginRuns/AutomationWorkspace.tsx
 msgid "View or edit JavaScript"
@@ -7899,6 +7463,8 @@ msgid "Integration sections"
 msgstr "Integration sections"
 
 #: src/chunks/PluginRuns/PluginPage.tsx
+#: src/views/Drive/DriveHome.tsx
+#: src/views/Drive/DriveHome.tsx
 msgid "Activity"
 msgstr "Activity"
 
@@ -8043,15 +7609,14 @@ msgid "Following {0}"
 msgstr "Following {0}"
 
 #. 0: Math.max(0, seats.included! - seats.used!); 1: seats.included
-#: src/components/InviteForm.tsx
+#: src/components/Share/useEditorSeats.ts
 msgid "{0} of {1} editor seats available on this drive."
 msgstr "{0} of {1} editor seats available on this drive."
 
-#: src/components/InviteForm.tsx
+#: src/components/Share/useEditorSeats.ts
 msgid "Editor seat availability for this drive is unavailable."
 msgstr "Editor seat availability for this drive is unavailable."
 
-#: src/components/InviteForm.tsx
 #: src/components/Share/ShareDialog.tsx
 msgid "Preparing invite…"
 msgstr "Preparing invite…"
@@ -8128,10 +7693,6 @@ msgid "The response was interrupted."
 msgstr "The response was interrupted."
 
 #: src/views/File/ConvertToDocumentButton.tsx
-msgid "Converted to document"
-msgstr "Converted to document"
-
-#: src/views/File/ConvertToDocumentButton.tsx
 msgid "Could not convert the file."
 msgstr "Could not convert the file."
 
@@ -8176,6 +7737,7 @@ msgid "Unpublish website"
 msgstr "Unpublish website"
 
 #: src/chunks/Plugins/InstallationReviewDialog.tsx
+#: src/components/Cloud/DriveAddress.tsx
 #: src/views/Installation/InstallationPage.tsx
 #: src/views/Installation/InstallationPage.tsx
 msgid "Release"
@@ -8409,15 +7971,6 @@ msgstr "No matches. Try another search."
 msgid "What the assistant can build"
 msgstr "What the assistant can build"
 
-#. 0: next
-#: src/views/Installation/InstallationPage.tsx
-msgid "Installation {0}"
-msgstr "Installation {0}"
-
-#: src/views/Installation/InstallationPage.tsx
-msgid "Plugin updated"
-msgstr "Plugin updated"
-
 #. 0: currentStatus
 #: src/views/Installation/InstallationPage.tsx
 msgid "Status: {0}"
@@ -8432,6 +7985,7 @@ msgid "Resume"
 msgstr "Resume"
 
 #: src/chunks/FormBuilder/FormAccessSection.tsx
+#: src/components/ConnectedAppsCard.tsx
 #: src/views/Installation/InstallationPage.tsx
 #: src/views/Installation/InstallationPage.tsx
 msgid "Revoke"
@@ -8479,15 +8033,12 @@ msgstr "No"
 msgid "This view has no dashboard yet."
 msgstr "This view has no dashboard yet."
 
-#: src/chunks/TablePage/Dashboard/DashboardView.tsx
-msgid "Loading dashboard…"
-msgstr "Loading dashboard…"
-
 #: src/views/PeerInvitePage.tsx
 msgid "This is taking longer than it should. The person who invited you needs to have this drive open in their browser. Try again, or ask them for a new invitation."
 msgstr "This is taking longer than it should. The person who invited you needs to have this drive open in their browser. Try again, or ask them for a new invitation."
 
 #: src/chunks/AI/AISidebar.tsx
+#: src/routes/Search/ChatMatchRow.tsx
 msgid "AI chat"
 msgstr "AI chat"
 
@@ -8785,12 +8336,14 @@ msgstr "Could not load zero-retention models. No unrestricted models are shown."
 msgid "The selected model is not in the zero-retention list. Choose another model."
 msgstr "The selected model is not in the zero-retention list. Choose another model."
 
-#: src/chunks/FormBuilder/ShareLinkPanel.tsx
+#: src/components/ShareLink.tsx
 msgid "<0/> Copy link"
 msgstr "<0/> Copy link"
 
 #: src/chunks/FormBuilder/ConditionsEditor.tsx
 #: src/components/Share/ShareDialog.tsx
+#: src/routes/SendIdentityRoute.tsx
+#: src/views/Drive/GettingStartedCard.tsx
 msgid "Done"
 msgstr "Done"
 
@@ -8799,7 +8352,6 @@ msgid "AI settings…"
 msgstr "AI settings…"
 
 #: src/actions/appActions.ts
-#: src/components/SideBar/AccountMenu.tsx
 #: src/routes/SettingsAgent.tsx
 msgid "User"
 msgstr "User"
@@ -8825,18 +8377,6 @@ msgstr "No plugins to show here."
 #: src/helpers/privateHomeNudge.tsx
 msgid "Your home is ready. Have data elsewhere?{0} <0>Connect another device or restore a backup</0>."
 msgstr "Your home is ready. Have data elsewhere?{0} <0>Connect another device or restore a backup</0>."
-
-#: src/routes/SyncRoute.tsx
-msgid "If another device has this workspace, scan the code below to connect it."
-msgstr "If another device has this workspace, scan the code below to connect it."
-
-#: src/routes/SyncRoute.tsx
-msgid "If another device has this workspace, you can connect it."
-msgstr "If another device has this workspace, you can connect it."
-
-#: src/routes/SyncRoute.tsx
-msgid "This workspace could not be read on this device"
-msgstr "This workspace could not be read on this device"
 
 #: src/routes/SyncRoute.tsx
 msgid "Local copy unavailable"
@@ -8914,26 +8454,10 @@ msgid "Buy AI credits"
 msgstr "Buy AI credits"
 
 #: src/routes/SyncRoute.tsx
-msgid "Could not change workspace sync."
-msgstr "Could not change workspace sync."
-
-#: src/routes/SyncRoute.tsx
 msgid "Starting server sync…"
 msgstr "Starting server sync…"
 
-#: src/routes/SyncRoute.tsx
-msgid "Sync this workspace with this server"
-msgstr "Sync this workspace with this server"
-
-#: src/routes/SyncRoute.tsx
-msgid "Off stops server sync for this workspace on this browser. The server’s existing copy and other devices are unchanged; browser sync can still connect open browsers."
-msgstr "Off stops server sync for this workspace on this browser. The server’s existing copy and other devices are unchanged; browser sync can still connect open browsers."
-
-#: src/routes/SyncRoute.tsx
-msgid "Workspace sync off"
-msgstr "Workspace sync off"
-
-#: src/chunks/RTE/FormattingToolbar.tsx
+#: src/chunks/RTE/useFormattingToolbarVisible.tsx
 msgid "Show formatting toolbar"
 msgstr "Show formatting toolbar"
 
@@ -8956,10 +8480,6 @@ msgstr "Insert image"
 #: src/chunks/RTE/FormattingToolbar.tsx
 msgid "Mention a resource (@)"
 msgstr "Mention a resource (@)"
-
-#: src/chunks/RTE/FormattingToolbar.tsx
-msgid "Hide toolbar (type / or @ instead)"
-msgstr "Hide toolbar (type / or @ instead)"
 
 #: src/chunks/RTE/FormattingToolbar.tsx
 msgid "Formatting"
@@ -9057,8 +8577,12 @@ msgstr "Pinned to <0/>"
 msgid "from {0}"
 msgstr "from {0}"
 
+#. 0: app.name
+#. 0: sharing.app.name
 #. 0: title
 #. 0: title
+#: src/chunks/PluginRuns/CatalogApps.tsx
+#: src/chunks/PluginRuns/CatalogApps.tsx
 #: src/components/Share/ShareDialog.tsx
 #: src/components/Share/ShareDialog.tsx
 msgid "Share {0}"
@@ -9081,6 +8605,7 @@ msgstr "Invite sent to {0} people"
 
 #: src/components/Presence/PresenceAvatarMenu.tsx
 #: src/components/Share/ShareDialog.tsx
+#: src/routes/Search/ChatMatchRow.tsx
 msgid "Message"
 msgstr "Message"
 
@@ -9093,6 +8618,7 @@ msgid "Add a note for the people you're inviting"
 msgstr "Add a note for the people you're inviting"
 
 #: src/components/Share/ShareDialog.tsx
+#: src/routes/SendIdentityRoute.tsx
 msgid "Sending…"
 msgstr "Sending…"
 
@@ -9131,11 +8657,6 @@ msgstr "Role for invited people"
 #: src/components/Share/PeopleWithAccess.tsx
 msgid "People with access"
 msgstr "People with access"
-
-#. 0: name
-#: src/components/Share/PeopleWithAccess.tsx
-msgid "Removed {0}"
-msgstr "Removed {0}"
 
 #. 0: name
 #: src/components/Share/PeopleWithAccess.tsx
@@ -9205,7 +8726,7 @@ msgstr "Could not set up this importer: {0}"
 msgid "Set up"
 msgstr "Set up"
 
-#. 0: manifest.destination.table.name
+#. 0: names[0]
 #: src/chunks/PluginRuns/FileImport.tsx
 msgid "Set up creates a {0} table for this importer. Nothing is imported yet."
 msgstr "Set up creates a {0} table for this importer. Nothing is imported yet."
@@ -9235,11 +8756,6 @@ msgstr "Finishing the connection…"
 #: src/chunks/AppPage/ProxyConnectReturn.tsx
 msgid "Sign in to finish connecting this account."
 msgstr "Sign in to finish connecting this account."
-
-#. 0: app.name; 1: app.version
-#: src/chunks/PluginRuns/CatalogApps.tsx
-msgid "{0} updated to {1}"
-msgstr "{0} updated to {1}"
 
 #. 0: mine.version ?? '(unknown version)'
 #: src/chunks/PluginRuns/CatalogApps.tsx
@@ -9288,16 +8804,13 @@ msgid "Discover integrations from this catalog.json. This setting is saved in th
 msgstr "Discover integrations from this catalog.json. This setting is saved in this browser."
 
 #: src/components/Settings/IntegrationSettings.tsx
+#: src/components/Settings/IntegrationSettings.tsx
 msgid "Enter an HTTPS URL or a localhost HTTP URL pointing at a catalog.json file."
 msgstr "Enter an HTTPS URL or a localhost HTTP URL pointing at a catalog.json file."
 
 #: src/components/SignInButton.tsx
 msgid "Go to the User page"
 msgstr "Go to the User page"
-
-#: src/routes/DemoRoute.tsx
-msgid "Demo setup stalled"
-msgstr "Demo setup stalled"
 
 #. 0: title || 'Untitled Chat'; 1: messages.length
 #: src/chunks/AI/formatAIChatReport.ts
@@ -9471,51 +8984,16 @@ msgid "This page no longer exists"
 msgstr "This page no longer exists"
 
 #: src/views/ErrorPage.tsx
-msgid "It was deleted, for example when you left a demo or a preview."
-msgstr "It was deleted, for example when you left a demo or a preview."
-
-#: src/views/ErrorPage.tsx
 msgid "Open your drive"
 msgstr "Open your drive"
 
-#: src/components/DemoExitButton.tsx
-#: src/routes/NewDriveRoute.tsx
 #: src/views/ErrorPage.tsx
 msgid "Choose a template"
 msgstr "Choose a template"
 
-#: src/components/DemoExitButton.tsx
-msgid "Leave demo"
-msgstr "Leave demo"
-
-#: src/components/DemoExitButton.tsx
-msgid "Demo workspace"
-msgstr "Demo workspace"
-
-#. 0: resource.title
-#: src/components/DemoExitButton.tsx
-msgid "Preview: {0}"
-msgstr "Preview: {0}"
-
-#: src/components/SetupBar.tsx
-msgid "Setup"
-msgstr "Setup"
-
-#: src/routes/NewDriveRoute.tsx
-msgid "Back to the demo"
-msgstr "Back to the demo"
-
-#: src/routes/NewDriveRoute.tsx
-msgid "Back to the preview"
-msgstr "Back to the preview"
-
-#: src/routes/NewDriveRoute.tsx
+#: src/views/Drive/GettingStartedCard.tsx
 msgid "Name your drive"
 msgstr "Name your drive"
-
-#: src/routes/SyncRoute.tsx
-msgid "This server doesn’t host this workspace, so it refuses its changes. Set up Cloud Server to sync it here, or turn off sync to keep it on this device only."
-msgstr "This server doesn’t host this workspace, so it refuses its changes. Set up Cloud Server to sync it here, or turn off sync to keep it on this device only."
 
 #: src/routes/SyncRoute.tsx
 msgid "Not hosted here"
@@ -9598,19 +9076,26 @@ msgstr "{0} replied to you"
 
 #. 0: author; 1: on
 #. 0: who; 1: on
+#. 0: who; 1: target
 #: src/components/Notifications/MessageNotifier.tsx
 #: src/components/Notifications/NotificationList.tsx
+#: src/views/NotificationPage.tsx
 msgid "{0} commented on {1}"
 msgstr "{0} commented on {1}"
 
 #. 0: author; 1: on
 #. 0: who; 1: on
+#. 0: who; 1: target
 #: src/components/Notifications/MessageNotifier.tsx
 #: src/components/Notifications/NotificationList.tsx
+#: src/views/NotificationPage.tsx
 msgid "{0} in {1}"
 msgstr "{0} in {1}"
 
 #: src/components/Notifications/MessageNotifier.tsx
+#: src/components/Notifications/NotificationList.tsx
+#: src/components/Notifications/NotificationList.tsx
+#: src/views/NotificationPage.tsx
 msgid "Someone"
 msgstr "Someone"
 
@@ -9655,10 +9140,6 @@ msgstr "Lets {0} edit the drives made on this browser, then switches to that ide
 #: src/actions/resourceActions.tsx
 msgid "Add or remove tags"
 msgstr "Add or remove tags"
-
-#: src/routes/DemoRoute.tsx
-msgid "The demo keeps its workspace in this browser, and this window does not allow that. Private windows in Firefox and Safari block it, and so do settings that block site data. Open this page in a normal window to try the demo."
-msgstr "The demo keeps its workspace in this browser, and this window does not allow that. Private windows in Firefox and Safari block it, and so do settings that block site data. Open this page in a normal window to try the demo."
 
 #: src/components/Vault/AICreditsService.tsx
 msgid "Could not open checkout. Try again."
@@ -9780,9 +9261,6 @@ msgstr "All columns are on this form. Add a column to the table to ask something
 #: src/chunks/FormBuilder/AddFieldMenu.tsx
 msgid "Add a column to the table"
 msgstr "Add a column to the table"
-
-#~ msgid "Also delete the results table and its responses"
-#~ msgstr "Also delete the results table and its responses"
 
 #: src/chunks/FormBuilder/DeleteFormDialog.tsx
 msgid "Are you sure you want to delete this form?"
@@ -10025,9 +9503,6 @@ msgstr "Are you sure you want to delete this page? Its fields will no longer be 
 msgid "Delete page"
 msgstr "Delete page"
 
-#~ msgid "Back to table"
-#~ msgstr "Back to table"
-
 #: src/chunks/FormBuilder/FormBuilderPage.tsx
 msgid "Fields"
 msgstr "Fields"
@@ -10035,12 +9510,6 @@ msgstr "Fields"
 #: src/chunks/FormBuilder/FormBuilderPage.tsx
 msgid "Summary"
 msgstr "Summary"
-
-#~ msgid "Required table columns are missing from this form:"
-#~ msgstr "Required table columns are missing from this form:"
-
-#~ msgid ". Responses cannot be saved without them."
-#~ msgstr ". Responses cannot be saved without them."
 
 #. 0: formatScheduleMoment(availability.opensAt)
 #: src/chunks/FormBuilder/PublishToggle.tsx
@@ -10140,6 +9609,7 @@ msgid "Share form"
 msgstr "Share form"
 
 #: src/chunks/FormBuilder/ShareLinkPanel.tsx
+#: src/chunks/PluginRuns/CatalogApps.tsx
 msgid "<0/> Share"
 msgstr "<0/> Share"
 
@@ -10449,15 +9919,6 @@ msgstr "A select column contributes its tags. Any other column turns each row in
 msgid "This table has no columns to link to."
 msgstr "This table has no columns to link to."
 
-#~ msgid "Everyone who opens this form sees every row of"
-#~ msgstr "Everyone who opens this form sees every row of"
-
-#~ msgid "as an option. Only link a table whose contents you are happy to make public."
-#~ msgstr "as an option. Only link a table whose contents you are happy to make public."
-
-#~ msgid "This publishes the rows"
-#~ msgstr "This publishes the rows"
-
 #: src/chunks/FormBuilder/FieldOptions/LinkOptionsDialog.tsx
 msgid "Link options"
 msgstr "Link options"
@@ -10477,9 +9938,6 @@ msgstr "Replace"
 #: src/chunks/FormBuilder/FieldOptions/PictureChoiceOptions.tsx
 msgid "Add image"
 msgstr "Add image"
-
-#~ msgid "points"
-#~ msgstr "points"
 
 #: src/chunks/FormBuilder/FieldOptions/ScaleOptions.tsx
 msgid "Scale"
@@ -10506,6 +9964,7 @@ msgid "♥ Heart"
 msgstr "♥ Heart"
 
 #: src/chunks/FormBuilder/FieldOptions/TextOptions.tsx
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
 msgid "Min length"
 msgstr "Min length"
 
@@ -10514,6 +9973,7 @@ msgid "The fewest characters an answer may carry. An unanswered question still c
 msgstr "The fewest characters an answer may carry. An unanswered question still counts as unanswered rather than as too short — that is what Required is for."
 
 #: src/chunks/FormBuilder/FieldOptions/TextOptions.tsx
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
 msgid "Max length"
 msgstr "Max length"
 
@@ -10542,25 +10002,10 @@ msgstr "Min rows"
 msgid "Max rows"
 msgstr "Max rows"
 
-#. 0: allowsOnly.length + 1
+#. 0: tags.length + 1
 #: src/chunks/FormBuilder/FieldOptions/TagListEditor.tsx
 msgid "Option {0}"
 msgstr "Option {0}"
-
-#~ msgid "Showing first"
-#~ msgstr "Showing first"
-
-#~ msgid "answers"
-#~ msgstr "answers"
-
-#~ msgid "min"
-#~ msgstr "min"
-
-#~ msgid "· mean"
-#~ msgstr "· mean"
-
-#~ msgid "· max"
-#~ msgstr "· max"
 
 #. 0: summary.responses
 #: src/chunks/FormBuilder/Summary/SummaryTab.tsx
@@ -10582,9 +10027,6 @@ msgstr "No summary available. The server may need to be updated."
 #: src/chunks/FormBuilder/Summary/SummaryTab.tsx
 msgid "No responses yet"
 msgstr "No responses yet"
-
-#~ msgid "skipped"
-#~ msgstr "skipped"
 
 #. 0: field.answered
 #: src/chunks/FormBuilder/Summary/SummaryTab.tsx
@@ -10810,7 +10252,9 @@ msgid "{0}: {1} comments on {2}"
 msgstr "{0}: {1} comments on {2}"
 
 #. 0: who; 1: on
+#. 0: who; 1: target
 #: src/components/Notifications/NotificationList.tsx
+#: src/views/NotificationPage.tsx
 msgid "{0} replied to you in {1}"
 msgstr "{0} replied to you in {1}"
 
@@ -10828,10 +10272,6 @@ msgstr "This backup is sealed in this browser only. {0} is not holding a copy, s
 #: src/chunks/AppPage/ConnectDialog.tsx
 msgid "Connect {0}"
 msgstr "Connect {0}"
-
-#: src/chunks/FormBuilder/ShareLinkPanel.tsx
-msgid "Host this workspace on a Cloud Server to share it."
-msgstr "Host this workspace on a Cloud Server to share it."
 
 #: src/chunks/FormBuilder/ShareLinkPanel.tsx
 msgid "Connect or self-host a server in Sync settings to share it."
@@ -11060,6 +10500,7 @@ msgstr "This drive isn't on this device yet"
 msgid "<0>Sync anytime with a server.</0> Once the drive's owner connects it to a server, it opens on any device, even when the others are closed."
 msgstr "<0>Sync anytime with a server.</0> Once the drive's owner connects it to a server, it opens on any device, even when the others are closed."
 
+#: src/views/AgentPage.tsx
 #: src/views/DriveUnavailable.tsx
 msgid "Technical details"
 msgstr "Technical details"
@@ -11075,10 +10516,6 @@ msgstr "Add a view"
 #: src/chunks/TablePage/TableViewTabs.tsx
 msgid "Change this view to"
 msgstr "Change this view to"
-
-#: src/routes/DemoRoute.tsx
-msgid "Demo setup finished after stall"
-msgstr "Demo setup finished after stall"
 
 #. 0: providerName(portalUrl)
 #: src/components/Vault/LinkProviderPanel.tsx
@@ -11361,10 +10798,6 @@ msgstr "Reload resource"
 msgid "Fetch this resource from the server again, replacing the local copy."
 msgstr "Fetch this resource from the server again, replacing the local copy."
 
-#: src/actions/resourceActions.tsx
-msgid "Resource reloaded"
-msgstr "Resource reloaded"
-
 #: src/actions/appMenuItems.tsx
 msgid "Restart app"
 msgstr "Restart app"
@@ -11372,18 +10805,6 @@ msgstr "Restart app"
 #: src/actions/appMenuItems.tsx
 msgid "Reload the whole app, as if you opened it again."
 msgstr "Reload the whole app, as if you opened it again."
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "Opening sign-up…"
-msgstr "Opening sign-up…"
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "Next, create your account with your email address and a way to sign in. Then you come back here to create your drive."
-msgstr "Next, create your account with your email address and a way to sign in. Then you come back here to create your drive."
-
-#: src/helpers/sentry.ts
-msgid "Commit keeps failing"
-msgstr "Commit keeps failing"
 
 #: src/routes/SyncRoute.tsx
 msgid "Stop uploading this change? It stays on this device but will not reach the server."
@@ -11397,7 +10818,9 @@ msgstr "Discard upload"
 msgid "Included AI isn't reachable right now. Check your connection and sign-in, then reload to try again."
 msgstr "Included AI isn't reachable right now. Check your connection and sign-in, then reload to try again."
 
-#: src/components/SideBar/MessagesPanel.tsx
+#: src/components/SideBar/usePanelList.ts
+#: src/views/AgentPage.tsx
+#: src/views/AgentPage.tsx
 msgid "Messages"
 msgstr "Messages"
 
@@ -11425,10 +10848,6 @@ msgstr "Only you"
 #: src/views/Conversation/NewMessageDialog.tsx
 msgid "Who"
 msgstr "Who"
-
-#: src/views/Conversation/NewMessageDialog.tsx
-msgid "Paste their Atomic ID. They find it under their account. Only the two of you can read what you send."
-msgstr "Paste their Atomic ID. They find it under their account. Only the two of you can read what you send."
 
 #: src/views/Conversation/NewMessageDialog.tsx
 msgid "Starting…"
@@ -11471,6 +10890,7 @@ msgid "Data"
 msgstr "Data"
 
 #: src/components/MetaSetter.tsx
+#: src/views/getting-started/GettingStartedFlow.tsx
 msgid "Get started"
 msgstr "Get started"
 
@@ -11542,9 +10962,6 @@ msgstr "Nothing here takes up space."
 msgid "Where space goes"
 msgstr "Where space goes"
 
-#~ msgid "Each tile is an item in this workspace. Bigger tile, more space.{0} <0/> resource, <1/> resource with other resources, <2/> mixed (files and resources), <3/> files and images."
-#~ msgstr "Each tile is an item in this workspace. Bigger tile, more space.{0} <0/> resource, <1/> resource with other resources, <2/> mixed (files and resources), <3/> files and images."
-
 #: src/helpers/storageMap.ts
 msgid "This workspace"
 msgstr "This workspace"
@@ -11571,6 +10988,7 @@ msgid "Freed {0}."
 msgstr "Freed {0}."
 
 #: src/components/Vault/VaultStorage.tsx
+#: src/components/Vault/VaultStorage.tsx
 msgid "Nothing to free."
 msgstr "Nothing to free."
 
@@ -11578,7 +10996,7 @@ msgstr "Nothing to free."
 msgid "Could not free storage."
 msgstr "Could not free storage."
 
-#: src/components/Vault/VaultStorage.tsx
+#: src/components/Vault/VaultPanel.tsx
 msgid "Manage storage"
 msgstr "Manage storage"
 
@@ -11599,20 +11017,13 @@ msgid "Change history"
 msgstr "Change history"
 
 #: src/components/Vault/VaultStorage.tsx
+#: src/components/Vault/VaultStorage.tsx
 msgid "Snapshots"
 msgstr "Snapshots"
 
 #: src/components/Vault/VaultStorage.tsx
 msgid "Files and images"
 msgstr "Files and images"
-
-#: src/components/Vault/VaultStorage.tsx
-msgid "Search index"
-msgstr "Search index"
-
-#: src/components/Vault/VaultStorage.tsx
-msgid "Compression data"
-msgstr "Compression data"
 
 #: src/components/Vault/VaultStorage.tsx
 msgid "Other"
@@ -11668,6 +11079,7 @@ msgstr "Could not start Cloud Server."
 msgid "{0} · Email recovery on"
 msgstr "{0} · Email recovery on"
 
+#: src/components/SyncProblemBanner.tsx
 #: src/routes/SyncRoute.tsx
 msgid "Trying again…"
 msgstr "Trying again…"
@@ -11721,24 +11133,12 @@ msgid "Manage plan"
 msgstr "Manage plan"
 
 #: src/routes/SyncRoute.tsx
-msgid "This workspace is on Cloud Server. This device still syncs with its old server."
-msgstr "This workspace is on Cloud Server. This device still syncs with its old server."
-
-#: src/routes/SyncRoute.tsx
-msgid "Moving this workspace to Cloud Server. It switches on by itself; you can keep working."
-msgstr "Moving this workspace to Cloud Server. It switches on by itself; you can keep working."
-
-#: src/routes/SyncRoute.tsx
 msgid "Turn on Cloud Server"
 msgstr "Turn on Cloud Server"
 
 #: src/routes/SyncRoute.tsx
 msgid "Upgrade to Cloud Server"
 msgstr "Upgrade to Cloud Server"
-
-#: src/routes/SyncRoute.tsx
-msgid "Everything in Cloud Vault, plus a hosted workspace on AtomicServer.eu, always online. Our servers process what you put here."
-msgstr "Everything in Cloud Vault, plus a hosted workspace on AtomicServer.eu, always online. Our servers process what you put here."
 
 #: src/components/Vault/VaultPanel.tsx
 msgid "Sealed on your device, so we cannot read it"
@@ -11752,15 +11152,14 @@ msgstr "Restore this workspace on any device"
 msgid "Free with an account"
 msgstr "Free with an account"
 
+#: src/components/AccountRecoveryCard.tsx
 #: src/components/Vault/VaultPanel.tsx
 msgid "Turning on…"
 msgstr "Turning on…"
 
 #. 0: Math.round(restoreProgress * 100)
 #. 0: Math.round(vault.restoreProgress * 100)
-#. 0: Math.round(vault.restoreProgress * 100)
 #: src/components/Vault/VaultPanel.tsx
-#: src/components/Vault/VaultRestoreAction.tsx
 #: src/views/getting-started/ConnectDeviceStep.tsx
 msgid "Restoring… {0}%"
 msgstr "Restoring… {0}%"
@@ -11769,35 +11168,15 @@ msgstr "Restoring… {0}%"
 msgid "Offered"
 msgstr "Offered"
 
-#. 0: PRODUCT_NAME
-#: src/routes/SyncRoute.tsx
-msgid "{0} added Cloud Server to this workspace. It waits for your consent."
-msgstr "{0} added Cloud Server to this workspace. It waits for your consent."
-
-#: src/routes/SyncRoute.tsx
-msgid "This workspace’s plan includes Cloud Server. It waits for your consent."
-msgstr "This workspace’s plan includes Cloud Server. It waits for your consent."
-
-#: src/routes/SyncRoute.tsx
-msgid "<0>Before you turn it on:</0> unlike Cloud Vault, Cloud Server stores a readable, unencrypted copy of this workspace on our servers, so we can run search, shareable links and the API for it. Your sharing permissions still control who else sees it, and you can turn it off at any time."
-msgstr "<0>Before you turn it on:</0> unlike Cloud Vault, Cloud Server stores a readable, unencrypted copy of this workspace on our servers, so we can run search, shareable links and the API for it. Your sharing permissions still control who else sees it, and you can turn it off at any time."
-
 #. 0: address
 #: src/views/getting-started/GettingStartedFlow.tsx
 msgid "Forget {0} on this device"
 msgstr "Forget {0} on this device"
 
-#~ msgid "Saved {0}, identity {1}"
-#~ msgstr "Saved {0}, identity {1}"
-
 #. 0: new Date(account.updated_at || account.created_at).toLocaleDateString(); 1: account.agent_subject.slice(-6)
 #: src/views/getting-started/GettingStartedFlow.tsx
 msgid "Saved {0}, identity …{1}"
 msgstr "Saved {0}, identity …{1}"
-
-#: src/routes/InviteRoute.tsx
-msgid "Opening invitation..."
-msgstr "Opening invitation..."
 
 #. 0: candidates[0]
 #: src/routes/InviteRoute.tsx
@@ -11832,8 +11211,8 @@ msgstr "You can get back in with:{0} {1}"
 msgid "Add a server"
 msgstr "Add a server"
 
+#: src/components/ConnectDevice.tsx
 #: src/components/ConnectServerDialog.tsx
-#: src/routes/SyncRoute.tsx
 msgid "How to run your own server"
 msgstr "How to run your own server"
 
@@ -11846,15 +11225,8 @@ msgstr "{0} conflict{1}"
 msgid "Merging keeps the fork's version."
 msgstr "Merging keeps the fork's version."
 
-#. 0: Number.isSafeInteger(seats.used) && Number.isSafeInteger(seats.included) ? `${Math.max(0, seats.included! - seats.used!)} of ${seats.included} editor seats available on this drive.` \\: 'Editor seat availability for this drive is unavailable.'; 1: ' '
-#: src/components/InviteForm.tsx
-msgid "{0}{1} Viewers are free."
-msgstr "{0}{1} Viewers are free."
-
-#. 0: results.length; 1: results.length !== 1 ? 's' \\: ''
-#. 0: results.length; 1: results.length !== 1 ? 's' \\: ''
+#. 0: total; 1: total !== 1 ? 's' \\: ''
 #: src/components/OverlayContainer.tsx
-#: src/routes/Search/SearchOverlay.tsx
 msgid "{0} result{1}"
 msgstr "{0} result{1}"
 
@@ -11882,12 +11254,6 @@ msgstr "save"
 msgid "Usage"
 msgstr "Usage"
 
-#. 0: step && ` Still busy with\\: ${STEP_LABELS[step]}.`
-#: src/routes/DemoRoute.tsx
-msgid "This is taking longer than usual. {0}"
-msgstr "This is taking longer than usual. {0}"
-
-#: src/routes/IntegrationStore.tsx
 #: src/routes/IntegrationStore.tsx
 msgid "Loading integrations…"
 msgstr "Loading integrations…"
@@ -11896,14 +11262,6 @@ msgstr "Loading integrations…"
 msgid "<0/> Show experimental plugins"
 msgstr "<0/> Show experimental plugins"
 
-#: src/routes/IntegrationStore.tsx
-msgid "Discover integrations"
-msgstr "Discover integrations"
-
-#: src/routes/SyncRoute.tsx
-msgid "These sync your other drives — not this workspace."
-msgstr "These sync your other drives — not this workspace."
-
 #: src/routes/SyncRoute.tsx
 msgid "No other devices yet — your data is safe on this one."
 msgstr "No other devices yet — your data is safe on this one."
@@ -11911,10 +11269,6 @@ msgstr "No other devices yet — your data is safe on this one."
 #: src/routes/SyncRoute.tsx
 msgid "Devices"
 msgstr "Devices"
-
-#: src/routes/SyncRoute.tsx
-msgid "Sync a device"
-msgstr "Sync a device"
 
 #. 0: status.pendingDirtyCount
 #: src/routes/SyncRoute.tsx
@@ -11959,10 +11313,6 @@ msgstr "{0} earlier messages were omitted to fit the report. The most recent mes
 #: src/chunks/AI/RealAIChat.tsx
 msgid "Tokens used:{0} {1} input,{2} {3} output"
 msgstr "Tokens used:{0} {1} input,{2} {3} output"
-
-#: src/chunks/EmojiInput/EmojiInput.tsx
-msgid "<0/> Remove"
-msgstr "<0/> Remove"
 
 #. 0: review.author
 #: src/chunks/Plugins/InstallationReviewDialog.tsx
@@ -12018,10 +11368,6 @@ msgstr "Used as <0/>. Its URLs are built at run time, so say which origin it may
 #: src/chunks/PluginRuns/PluginTrigger.tsx
 msgid "{0} events queued. They remain saved while waiting for review."
 msgstr "{0} events queued. They remain saved while waiting for review."
-
-#: src/chunks/Templates/DriveTemplateSetup.tsx
-msgid "Loading AI setup…"
-msgstr "Loading AI setup…"
 
 #: src/components/AI/AISettings.tsx
 msgid "<0/> or"
@@ -12127,10 +11473,6 @@ msgstr "You are offline, changes can not be saved"
 #: src/routes/NewResource/NewRoute.tsx
 msgid "Your resource types could not be loaded."
 msgstr "Your resource types could not be loaded."
-
-#: src/routes/Search/SearchOverlay.tsx
-msgid "Search matches on the names and descriptions of resources. Additionally you can filter by tag using <0/>"
-msgstr "Search matches on the names and descriptions of resources. Additionally you can filter by tag using <0/>"
 
 #: src/routes/Search/SearchRoute.tsx
 msgid "Searching for <0/>..."
@@ -12268,21 +11610,10 @@ msgstr "<0/> Add {0}"
 msgid "<0/> Select File"
 msgstr "<0/> Select File"
 
-#. 0: classType ? classTypeTitle \\: 'new item'; 1: ' '
-#: src/components/forms/ResourceSelector/DropdownInput.tsx
-msgid "Create {0}:{1} <0/>"
-msgstr "Create {0}:{1} <0/>"
-
 #. 0: ' '
 #: src/components/forms/SearchBox/SearchBoxWindow.tsx
 msgid "Create{0} <0/>"
 msgstr "Create{0} <0/>"
-
-#~ msgid "Setting up Cloud Server. Your workspace is being copied over; this turns on by itself once it has arrived."
-#~ msgstr "Setting up Cloud Server. Your workspace is being copied over; this turns on by itself once it has arrived."
-
-#~ msgid "Included in your plan. Turn it on to start hosting this drive; nothing more to buy."
-#~ msgstr "Included in your plan. Turn it on to start hosting this drive; nothing more to buy."
 
 #: src/chunks/FormBuilder/DeleteFormDialog.tsx
 msgid "<0/> Also delete the results table and its responses"
@@ -12310,14 +11641,6 @@ msgstr "Required table columns are missing from this form:{0} {1} . Responses ca
 msgid "Reading what is stored…"
 msgstr "Reading what is stored…"
 
-#: src/components/Vault/VaultStorage.tsx
-msgid "Uploads in progress"
-msgstr "Uploads in progress"
-
-#: src/components/Vault/VaultStorage.tsx
-msgid "Leftovers <0>· cleaned up automatically</0>"
-msgstr "Leftovers <0>· cleaned up automatically</0>"
-
 #. 0: formatBytes(usage.reclaimable_bytes)
 #: src/components/Vault/VaultStorage.tsx
 msgid "{0} of old history and unused files can be removed. Nothing you can see is lost."
@@ -12335,11 +11658,6 @@ msgstr "Free it anyway"
 #: src/components/Vault/VaultStorage.tsx
 msgid "Nothing extra is stored. This is what your workspace needs."
 msgstr "Nothing extra is stored. This is what your workspace needs."
-
-#. 0: formatBytes(usage.used_bytes); 1: formatBytes(usage.quota_bytes); 2: ' '
-#: src/components/Vault/VaultStorage.tsx
-msgid "{0} of {1}{2} used"
-msgstr "{0} of {1}{2} used"
 
 #. 0: ' '
 #: src/chunks/FormBuilder/FieldOptions/LinkOptionsDialog.tsx
@@ -12369,3 +11687,1713 @@ msgstr "{0} points"
 #: src/chunks/FormBuilder/Summary/AnswerList.tsx
 msgid "Showing first {0} answers"
 msgstr "Showing first {0} answers"
+
+#: src/routes/SettingsAgent.tsx
+msgid "Add your passkey here. A passkey added in the app also unlocks your encrypted backup, which only the app can do."
+msgstr "Add your passkey here. A passkey added in the app also unlocks your encrypted backup, which only the app can do."
+
+#: src/chunks/TablePage/TableFilterChip.tsx
+msgid "This filters on each entry's own date. A repeating entry is matched on its first date, not on the days it repeats on."
+msgstr "This filters on each entry's own date. A repeating entry is matched on its first date, not on the days it repeats on."
+
+#: src/components/AccountRecoveryCard.tsx
+msgid "Could not turn this on. Please try again."
+msgstr "Could not turn this on. Please try again."
+
+#: src/components/AccountRecoveryCard.tsx
+msgid "Confirm with your passkey"
+msgstr "Confirm with your passkey"
+
+#: src/components/AccountRecoveryCard.tsx
+msgid "Confirm with your code"
+msgstr "Confirm with your code"
+
+#. 0: managedAccount.email
+#: src/routes/SyncRoute.tsx
+msgid "{0}. We hold your key sealed, but signing in does not open it yet. Confirm once with your passkey or recovery code to turn that on."
+msgstr "{0}. We hold your key sealed, but signing in does not open it yet. Confirm once with your passkey or recovery code to turn that on."
+
+#: src/routes/SyncRoute.tsx
+msgid "Turn it on"
+msgstr "Turn it on"
+
+#. 0: PRODUCT_NAME
+#: src/components/AccountRecoveryCard.tsx
+msgid "Signing in to your {0} account does not open this identity yet: this backup was made before that was possible. Confirm once with your passkey to turn it on."
+msgstr "Signing in to your {0} account does not open this identity yet: this backup was made before that was possible. Confirm once with your passkey to turn it on."
+
+#. 0: PRODUCT_NAME
+#: src/components/AccountRecoveryCard.tsx
+msgid "Signing in to your {0} account does not open this identity yet: this backup was made before that was possible. Confirm once with your recovery code to turn it on."
+msgstr "Signing in to your {0} account does not open this identity yet: this backup was made before that was possible. Confirm once with your recovery code to turn it on."
+
+#: src/components/BrowserPeerPanel.tsx
+msgid "See Cloud Server plans"
+msgstr "See Cloud Server plans"
+
+#: src/components/BrowserPeerPanel.tsx
+msgid "Browser sync has reached its limit of peer connections. A Cloud Server on atomic.place keeps this workspace in sync for everyone, without peers."
+msgstr "Browser sync has reached its limit of peer connections. A Cloud Server on atomic.place keeps this workspace in sync for everyone, without peers."
+
+#: src/hooks/useAddToOntology.ts
+msgid "A property can't be moved to another ontology."
+msgstr "A property can't be moved to another ontology."
+
+#: src/helpers/moveResource.ts
+msgid "A property can't be moved to another parent."
+msgstr "A property can't be moved to another parent."
+
+#. 0: (err as Error).message
+#: src/views/OntologyPage/PropertyDatatypePicker.tsx
+msgid "Could not change datatype: {0}"
+msgstr "Could not change datatype: {0}"
+
+#. 0: (err as Error).message
+#: src/chunks/TablePage/PropertyForm/EditPropertyDialog.tsx
+msgid "Failed to save column: {0}"
+msgstr "Failed to save column: {0}"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Minimum"
+msgstr "Minimum"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Maximum"
+msgstr "Maximum"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Min items"
+msgstr "Min items"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Max items"
+msgstr "Max items"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Constraints"
+msgstr "Constraints"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Enter a number"
+msgstr "Enter a number"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Enter a whole number, zero or more"
+msgstr "Enter a whole number, zero or more"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Pattern"
+msgstr "Pattern"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Pattern (regular expression)"
+msgstr "Pattern (regular expression)"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+#: src/views/OntologyPage/Property/PropertyFormCommon.tsx
+msgid "Linked class"
+msgstr "Linked class"
+
+#: src/views/OntologyPage/Class/ClassConstraintSummary.tsx
+msgid "Links to <0/>"
+msgstr "Links to <0/>"
+
+#: src/views/OntologyPage/Class/ClassConstraintSummary.tsx
+#: src/views/OntologyPage/Property/PropertyFormCommon.tsx
+msgid "Allows only: <0/>"
+msgstr "Allows only: <0/>"
+
+#. 0: constraint.pattern.source
+#: src/views/OntologyPage/Class/ClassConstraintSummary.tsx
+msgid "Pattern: {0}"
+msgstr "Pattern: {0}"
+
+#: src/views/OntologyPage/Property/PropertyFormCommon.tsx
+msgid "The linked class, options and limits of this property are set per class. Open a class that uses it to edit them."
+msgstr "The linked class, options and limits of this property are set per class. Open a class that uses it to edit them."
+
+#: src/views/OntologyPage/Property/PropertyFormCommon.tsx
+msgid "Classtype: <0/>"
+msgstr "Classtype: <0/>"
+
+#: src/views/OntologyPage/Property/PropertyFormCommon.tsx
+msgid "Stored on this property (legacy)"
+msgstr "Stored on this property (legacy)"
+
+#. 0: String(min ?? '…'); 1: String(max ?? '…')
+#: src/views/OntologyPage/Class/ClassConstraintSummary.tsx
+msgid "{0} to {1}"
+msgstr "{0} to {1}"
+
+#: src/views/OntologyPage/Class/ClassConstraintSummary.tsx
+msgid "Items"
+msgstr "Items"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Remove from the allowed list"
+msgstr "Remove from the allowed list"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "<0/> Add"
+msgstr "<0/> Add"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Add an item to the allows-only list"
+msgstr "Add an item to the allows-only list"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "Allows only"
+msgstr "Allows only"
+
+#: src/chunks/AI/AIChatMessageParts/MessageToolPart.tsx
+msgid "Searching schemas"
+msgstr "Searching schemas"
+
+#: src/chunks/AI/AIChatMessageParts/MessageToolPart.tsx
+msgid "Saving schema"
+msgstr "Saving schema"
+
+#. 0: max
+#: src/chunks/FormBuilder/FieldOptions/BoundField.tsx
+msgid "Cannot exceed the table column limit ({0})."
+msgstr "Cannot exceed the table column limit ({0})."
+
+#. 0: floor
+#: src/chunks/FormBuilder/FieldOptions/BoundField.tsx
+msgid "Cannot go below the table column minimum ({0})."
+msgstr "Cannot go below the table column minimum ({0})."
+
+#: src/actions/resourceActions.tsx
+msgid "Invite people and manage who has access."
+msgstr "Invite people and manage who has access."
+
+#: src/components/ConnectedAppsCard.tsx
+msgid "No apps yet. An AI assistant connected through the Atomic MCP server shows up here."
+msgstr "No apps yet. An AI assistant connected through the Atomic MCP server shows up here."
+
+#. 0: report.failed.length; 1: report.failed.length === 1 ? 'resource' \\: 'resources'; 2: report.failed.map(f => f.reason).join('\; ')
+#: src/components/ConnectedAppsCard.tsx
+msgid "Still has access to {0} {1}: {2}"
+msgstr "Still has access to {0} {1}: {2}"
+
+#. 0: subject.slice(-8)
+#: src/components/ConnectedAppsCard.tsx
+msgid "App {0}"
+msgstr "App {0}"
+
+#: src/components/ConnectedAppsCard.tsx
+msgid "No access left"
+msgstr "No access left"
+
+#: src/components/ConnectedAppsCard.tsx
+msgid "Revoking"
+msgstr "Revoking"
+
+#: src/components/DatabaseUpgradeNotice.tsx
+msgid "Updating your local data"
+msgstr "Updating your local data"
+
+#: src/components/DatabaseUpgradeNotice.tsx
+msgid "This is needed once after an update and takes a moment. Keep this tab open."
+msgstr "This is needed once after an update and takes a moment. Keep this tab open."
+
+#: src/components/ConnectDevice.tsx
+msgid "This looks like a pairing code. A browser tab can’t take one. Enter it on a device that runs the app, or type a server address here."
+msgstr "This looks like a pairing code. A browser tab can’t take one. Enter it on a device that runs the app, or type a server address here."
+
+#: src/components/ConnectDevice.tsx
+msgid "That is not a pairing code or a server address."
+msgstr "That is not a pairing code or a server address."
+
+#: src/components/ConnectDevice.tsx
+msgid "That is not a server address."
+msgstr "That is not a server address."
+
+#: src/components/ConnectDevice.tsx
+msgid "Codes only route. Your key still decides what syncs."
+msgstr "Codes only route. Your key still decides what syncs."
+
+#: src/components/ConnectDevice.tsx
+msgid "An always-on device has an address. One you carry has a code."
+msgstr "An always-on device has an address. One you carry has a code."
+
+#: src/components/ConnectDevice.tsx
+msgid "Scan this from your other device, or copy the code."
+msgstr "Scan this from your other device, or copy the code."
+
+#. 0: serverName
+#: src/components/ConnectDevice.tsx
+msgid "Scan from your other device to sync with {0}."
+msgstr "Scan from your other device to sync with {0}."
+
+#: src/components/ConnectDevice.tsx
+msgid "Show this device"
+msgstr "Show this device"
+
+#: src/components/ConnectDevice.tsx
+msgid "Paste a pairing code, or type the address of an always-on device."
+msgstr "Paste a pairing code, or type the address of an always-on device."
+
+#: src/components/ConnectDevice.tsx
+msgid "Type the address of an always-on device."
+msgstr "Type the address of an always-on device."
+
+#: src/components/ConnectDevice.tsx
+msgid "Pairing code or server address"
+msgstr "Pairing code or server address"
+
+#: src/components/ConnectDevice.tsx
+msgid "Code or server address"
+msgstr "Code or server address"
+
+#: src/components/ConnectDevice.tsx
+msgid "Add a device"
+msgstr "Add a device"
+
+#: src/components/Spinner.tsx
+#: src/components/Spinner.tsx
+msgid "Loading"
+msgstr "Loading"
+
+#: src/components/SyncProblemBanner.tsx
+msgid "Turn off server sync"
+msgstr "Turn off server sync"
+
+#: src/components/Cloud/CloudServerDetails.tsx
+#: src/components/SyncProblemBanner.tsx
+msgid "See where space goes"
+msgstr "See where space goes"
+
+#. 0: count
+#: src/helpers/sentry.ts
+msgid "Event repeated {0} times"
+msgstr "Event repeated {0} times"
+
+#: src/helpers/syncProblem.ts
+msgid "Your storage is full"
+msgstr "Your storage is full"
+
+#: src/helpers/syncProblem.ts
+msgid "New changes stay on this device until there is room. Free up space or move to a bigger plan, and they will sync."
+msgstr "New changes stay on this device until there is room. Free up space or move to a bigger plan, and they will sync."
+
+#: src/helpers/syncProblem.ts
+msgid "Your account has no write access there. Your changes stay on this device. Ask the owner to give you access."
+msgstr "Your account has no write access there. Your changes stay on this device. Ask the owner to give you access."
+
+#: src/helpers/syncProblem.ts
+msgid "This is a problem on our side, not something you did. Your changes are safe on this device and will sync once it is fixed."
+msgstr "This is a problem on our side, not something you did. Your changes are safe on this device and will sync once it is fixed."
+
+#. 0: serverName
+#: src/helpers/syncProblem.ts
+msgid "Can’t reach {0}"
+msgstr "Can’t reach {0}"
+
+#: src/helpers/syncProblem.ts
+msgid "Your changes are kept on this device and sync when the connection is back."
+msgstr "Your changes are kept on this device and sync when the connection is back."
+
+#: src/helpers/syncProblem.ts
+msgid "Some changes could not sync"
+msgstr "Some changes could not sync"
+
+#: src/helpers/syncProblem.ts
+msgid "Some changes keep failing to sync"
+msgstr "Some changes keep failing to sync"
+
+#: src/routes/AppSettings.tsx
+msgid "Show Messages panel"
+msgstr "Show Messages panel"
+
+#: src/routes/AppSettings.tsx
+msgid "Show Favorites panel"
+msgstr "Show Favorites panel"
+
+#: src/routes/AppSettings.tsx
+msgid "Show Shared with me panel"
+msgstr "Show Shared with me panel"
+
+#: src/routes/AuthorizeMcpRoute.tsx
+#: src/routes/ConnectAgentRoute.tsx
+msgid "An app"
+msgstr "An app"
+
+#: src/routes/AuthorizeMcpRoute.tsx
+#: src/routes/AuthorizeMcpRoute.tsx
+#: src/routes/AuthorizeMcpRoute.tsx
+#: src/routes/ConnectAgentRoute.tsx
+#: src/routes/ConnectAgentRoute.tsx
+#: src/routes/ConnectAgentRoute.tsx
+msgid "Connect an app"
+msgstr "Connect an app"
+
+#: src/routes/AuthorizeMcpRoute.tsx
+msgid "This link is incomplete. Start again from the app that sent you here."
+msgstr "This link is incomplete. Start again from the app that sent you here."
+
+#. 0: serverHost ?? 'an unknown server'
+#: src/routes/AuthorizeMcpRoute.tsx
+msgid "This link points at {0}, which is not the server you are signed in to, so nothing was shared. Start again from the app that sent you here, using your own server."
+msgstr "This link points at {0}, which is not the server you are signed in to, so nothing was shared. Start again from the app that sent you here, using your own server."
+
+#: src/routes/AuthorizeMcpRoute.tsx
+#: src/routes/ConnectAgentRoute.tsx
+msgid "Sign in first, then open this link again."
+msgstr "Sign in first, then open this link again."
+
+#: src/components/ConnectAppForm.tsx
+msgid "Read only"
+msgstr "Read only"
+
+#: src/components/ConnectAppForm.tsx
+msgid "Read and edit"
+msgstr "Read and edit"
+
+#: src/components/ConnectAppForm.tsx
+msgid "Connecting"
+msgstr "Connecting"
+
+#: src/components/ConnectAppForm.tsx
+msgid "What it can reach"
+msgstr "What it can reach"
+
+#: src/components/ConnectAppForm.tsx
+msgid "What it can do"
+msgstr "What it can do"
+
+#. 0: host
+#: src/routes/AuthorizeMcpRoute.tsx
+msgid "Connect an app that returns to {0}"
+msgstr "Connect an app that returns to {0}"
+
+#. 0: action; 1: serverHost
+#: src/routes/AuthorizeMcpRoute.tsx
+msgid "<0/> asks to {0} your data on {1}."
+msgstr "<0/> asks to {0} your data on {1}."
+
+#. 0: host
+#: src/routes/AuthorizeMcpRoute.tsx
+msgid "When you allow it, you go back to {0}. The name is chosen by the app, so only allow it if that is where you expect to go. It gets its own access, so your secret stays with you, and you can revoke it at any time."
+msgstr "When you allow it, you go back to {0}. The name is chosen by the app, so only allow it if that is where you expect to go. It gets its own access, so your secret stays with you, and you can revoke it at any time."
+
+#: src/routes/ConnectAgentRoute.tsx
+msgid "This link is missing the app's key. Start again from the app that sent you here."
+msgstr "This link is missing the app's key. Start again from the app that sent you here."
+
+#. 0: name; 1: write ? 'read and edit' \\: 'read'
+#: src/routes/ConnectAgentRoute.tsx
+msgid "{0} can now {1} what you shared. You can go back to it. To stop it, revoke it under Connected apps in your account settings."
+msgstr "{0} can now {1} what you shared. You can go back to it. To stop it, revoke it under Connected apps in your account settings."
+
+#: src/routes/ConnectAgentRoute.tsx
+msgid "Account settings"
+msgstr "Account settings"
+
+#: src/routes/ConnectAgentRoute.tsx
+msgid "<0/> asks to use your Atomic data. It has its own key, so your secret stays with you, and you can revoke it at any time."
+msgstr "<0/> asks to use your Atomic data. It has its own key, so your secret stays with you, and you can revoke it at any time."
+
+#: src/routes/SettingsAgent.tsx
+msgid "Apps you let use your data, such as an AI assistant. Each has its own key; revoke one to cut it off."
+msgstr "Apps you let use your data, such as an AI assistant. Each has its own key; revoke one to cut it off."
+
+#: src/routes/SettingsAgent.tsx
+msgid "Connected apps"
+msgstr "Connected apps"
+
+#: src/routes/SyncRoute.tsx
+msgid "Cloud Server setup: no portal configured"
+msgstr "Cloud Server setup: no portal configured"
+
+#: src/routes/SyncRoute.tsx
+msgid "Cloud Server setup failed after sign-in"
+msgstr "Cloud Server setup failed after sign-in"
+
+#: src/routes/SyncRoute.tsx
+msgid "Cloud Server setup failed on its own"
+msgstr "Cloud Server setup failed on its own"
+
+#: src/views/ImporterPage.tsx
+msgid "Imported."
+msgstr "Imported."
+
+#: src/components/Cloud/DriveAddress.tsx
+#: src/helpers/managed/aliases.ts
+msgid "Could not save that address."
+msgstr "Could not save that address."
+
+#. 0: alias.host
+#: src/components/Cloud/DriveAddress.tsx
+msgid "Release {0}? Links to it stop working, and the name becomes available for anyone else to take."
+msgstr "Release {0}? Links to it stop working, and the name becomes available for anyone else to take."
+
+#: src/components/Cloud/DriveAddress.tsx
+#: src/helpers/managed/aliases.ts
+msgid "Could not release that address."
+msgstr "Could not release that address."
+
+#: src/components/Cloud/DriveAddress.tsx
+msgid "Available."
+msgstr "Available."
+
+#: src/components/Cloud/DriveAddress.tsx
+msgid "Not available."
+msgstr "Not available."
+
+#: src/components/Cloud/DriveAddress.tsx
+msgid "Checking…"
+msgstr "Checking…"
+
+#: src/components/Cloud/DriveAddress.tsx
+msgid "Setting up"
+msgstr "Setting up"
+
+#: src/components/Cloud/DriveAddress.tsx
+#: src/components/Cloud/DriveAddress.tsx
+msgid "Web address"
+msgstr "Web address"
+
+#: src/components/Cloud/DriveAddress.tsx
+msgid "Change address"
+msgstr "Change address"
+
+#: src/components/Cloud/DriveAddress.tsx
+msgid "New web address"
+msgstr "New web address"
+
+#: src/components/Cloud/DriveAddress.tsx
+msgid "Change"
+msgstr "Change"
+
+#: src/components/Cloud/DriveAddress.tsx
+msgid "Claim"
+msgstr "Claim"
+
+#. 0: formatBytes(usedBytes)
+#: src/components/Cloud/UsageMeter.tsx
+msgid "{0} used"
+msgstr "{0} used"
+
+#: src/components/Cloud/UsageMeter.tsx
+msgid "Storage used"
+msgstr "Storage used"
+
+#: src/components/Share/UsageLimit.tsx
+msgid "Limit uses"
+msgstr "Limit uses"
+
+#: src/components/Share/UsageLimit.tsx
+msgid "Maximum number of people"
+msgstr "Maximum number of people"
+
+#: src/components/Share/UsageLimit.tsx
+msgid "person can join"
+msgstr "person can join"
+
+#: src/components/Share/UsageLimit.tsx
+msgid "people can join"
+msgstr "people can join"
+
+#. 0: text
+#: src/components/Share/useEditorSeats.ts
+msgid "{0} Viewers are free."
+msgstr "{0} Viewers are free."
+
+#: src/components/SideBar/AccountMenu.tsx
+msgid "Signed in"
+msgstr "Signed in"
+
+#: src/components/Vault/VaultRestoreAction.tsx
+msgid "This device's storage isn't responding. Close other atomic.place windows or tabs, then try again."
+msgstr "This device's storage isn't responding. Close other atomic.place windows or tabs, then try again."
+
+#: src/helpers/managed/aliases.ts
+msgid "Web addresses are not available on your account yet."
+msgstr "Web addresses are not available on your account yet."
+
+#: src/helpers/managed/aliases.ts
+msgid "Could not load your web address."
+msgstr "Could not load your web address."
+
+#: src/helpers/managed/aliases.ts
+msgid "Could not check that address."
+msgstr "Could not check that address."
+
+#: src/helpers/managed/vault.ts
+msgid "This is not available on your account yet."
+msgstr "This is not available on your account yet."
+
+#: src/helpers/managed/vault.ts
+msgid "Storage details are not available on your account yet."
+msgstr "Storage details are not available on your account yet."
+
+#: src/views/Conversation/NewMessageDialog.tsx
+msgid "Name or did:ad:agent:…"
+msgstr "Name or did:ad:agent:…"
+
+#: src/views/Conversation/NewMessageDialog.tsx
+msgid "People in this drive"
+msgstr "People in this drive"
+
+#: src/views/Conversation/NewMessageDialog.tsx
+msgid "Search people in this drive by name, or paste their Atomic ID. They find it under their account. Only the two of you can read what you send."
+msgstr "Search people in this drive by name, or paste their Atomic ID. They find it under their account. Only the two of you can read what you send."
+
+#: src/chunks/FormBuilder/Summary/SummaryTab.tsx
+msgid "Summaries are made by a server, and this workspace has none. Host it on a Cloud Server to collect answers and see them summarized here."
+msgstr "Summaries are made by a server, and this workspace has none. Host it on a Cloud Server to collect answers and see them summarized here."
+
+#. 0: c.minimum
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "min {0}"
+msgstr "min {0}"
+
+#. 0: c.maximum
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "max {0}"
+msgstr "max {0}"
+
+#. 0: c.minLength
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "min {0} chars"
+msgstr "min {0} chars"
+
+#. 0: c.maxLength
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "max {0} chars"
+msgstr "max {0} chars"
+
+#. 0: c.minItems
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "min {0} items"
+msgstr "min {0} items"
+
+#. 0: c.maxItems
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "max {0} items"
+msgstr "max {0} items"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "pattern"
+msgstr "pattern"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "linked class"
+msgstr "linked class"
+
+#: src/views/OntologyPage/Class/ClassConstraintEditor.tsx
+msgid "options"
+msgstr "options"
+
+#. 0: names.length
+#: src/chunks/PluginRuns/FileImport.tsx
+msgid "Set up creates {0} tables for this importer. Nothing is imported yet."
+msgstr "Set up creates {0} tables for this importer. Nothing is imported yet."
+
+#. 0: formatBytes(usedBytes)
+#: src/components/Cloud/UsageMeter.tsx
+msgid "{0} backed up"
+msgstr "{0} backed up"
+
+#: src/components/Vault/VaultPanel.tsx
+msgid "This backup is part of your Cloud Server plan."
+msgstr "This backup is part of your Cloud Server plan."
+
+#: src/actions/resourceActions.tsx
+msgid "Move this resource out of the Trash, back to where it was."
+msgstr "Move this resource out of the Trash, back to where it was."
+
+#: src/actions/resourceActions.tsx
+#: src/actions/resourceActions.tsx
+msgid "Delete permanently"
+msgstr "Delete permanently"
+
+#: src/components/SideBar/AccountMenu.tsx
+#: src/components/SideBar/SidebarDropZones.tsx
+msgid "Trash"
+msgstr "Trash"
+
+#: src/actions/resourceActions.tsx
+#: src/components/SideBar/useSidebarDnd.ts
+msgid "Moved to Trash"
+msgstr "Moved to Trash"
+
+#: src/components/SideBar/useSidebarDnd.ts
+msgid "Could not move to Trash"
+msgstr "Could not move to Trash"
+
+#: src/components/SideBar/useSidebarDnd.ts
+msgid "Already in your favorites"
+msgstr "Already in your favorites"
+
+#: src/components/SideBar/useSidebarDnd.ts
+msgid "Added to favorites"
+msgstr "Added to favorites"
+
+#. 0: dragResource.title
+#: src/components/SideBar/useSidebarDnd.ts
+msgid "{0} was moved to the trash"
+msgstr "{0} was moved to the trash"
+
+#. 0: dragResource.title
+#: src/components/SideBar/useSidebarDnd.ts
+msgid "{0} was dropped on your favorites"
+msgstr "{0} was dropped on your favorites"
+
+#. 0: message.slice(0, 160)
+#: src/helpers/sentry.ts
+msgid "Commit keeps failing: {0}"
+msgstr "Commit keeps failing: {0}"
+
+#: src/views/ChatLogPage.tsx
+msgid "Opening the chat..."
+msgstr "Opening the chat..."
+
+#: src/views/ChatRoom/ChatRoomView.tsx
+msgid "(edited)"
+msgstr "(edited)"
+
+#: src/views/ChatRoom/ChatRoomView.tsx
+msgid "Delete message"
+msgstr "Delete message"
+
+#: src/views/ChatRoom/ChatRoomView.tsx
+msgid "Delete this message?"
+msgstr "Delete this message?"
+
+#: src/views/ChatRoom/ChatRoomView.tsx
+msgid "Edit message text"
+msgstr "Edit message text"
+
+#: src/components/DatabaseUpgradeNotice.tsx
+msgid "Chat messages are being packed into compact logs. This is needed once after an update and can take a while for a big chat. Keep this tab open."
+msgstr "Chat messages are being packed into compact logs. This is needed once after an update and can take a while for a big chat. Keep this tab open."
+
+#. 0: formatBytes(result.freed.bytes_reclaimed); 1: formatBytes(result.checkpointBytes)
+#: src/components/Vault/VaultStorage.tsx
+msgid "Freed {0}. The new snapshot uses {1}."
+msgstr "Freed {0}. The new snapshot uses {1}."
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Backups are paused, so the backup cannot be compressed."
+msgstr "Backups are paused, so the backup cannot be compressed."
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Wait for the current backup to finish."
+msgstr "Wait for the current backup to finish."
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Discard history"
+msgstr "Discard history"
+
+#: src/components/Vault/VaultStorage.tsx
+#: src/components/Vault/VaultStorage.tsx
+msgid "This cannot be undone."
+msgstr "This cannot be undone."
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Discard backup history?"
+msgstr "Discard backup history?"
+
+#. 0: formatBytes(discardGain(usage))
+#: src/components/Vault/VaultStorage.tsx
+msgid "The backup will keep only its newest snapshot, and about {0} will be freed."
+msgstr "The backup will keep only its newest snapshot, and about {0} will be freed."
+
+#: src/components/Vault/VaultPanel.tsx
+msgid "Backup saved to this device."
+msgstr "Backup saved to this device."
+
+#: src/components/Vault/VaultPanel.tsx
+msgid "Nothing is backed up yet."
+msgstr "Nothing is backed up yet."
+
+#: src/components/Vault/VaultPanel.tsx
+msgid "Download backup"
+msgstr "Download backup"
+
+#: src/components/Vault/VaultPanel.tsx
+msgid "Restore from file"
+msgstr "Restore from file"
+
+#: src/components/Vault/VaultPanel.tsx
+msgid "Backup file"
+msgstr "Backup file"
+
+#: src/helpers/managed/vaultFile.ts
+msgid "This is not an Atomic vault backup file. Pick a file ending in .atomic-vault."
+msgstr "This is not an Atomic vault backup file. Pick a file ending in .atomic-vault."
+
+#: src/helpers/managed/vaultFile.ts
+msgid "Atomic vault backup"
+msgstr "Atomic vault backup"
+
+#: src/helpers/managed/vaultFile.ts
+msgid "This backup file is incomplete. Download it again."
+msgstr "This backup file is incomplete. Download it again."
+
+#: src/helpers/managed/vaultFile.ts
+msgid "The header of this backup file is damaged."
+msgstr "The header of this backup file is damaged."
+
+#: src/helpers/managed/vaultFile.ts
+msgid "This backup file was made by a newer version of the app. Update the app to restore it."
+msgstr "This backup file was made by a newer version of the app. Update the app to restore it."
+
+#: src/helpers/managed/vaultFile.ts
+msgid "This backup file has extra data at the end and cannot be trusted."
+msgstr "This backup file has extra data at the end and cannot be trusted."
+
+#: src/helpers/managed/vaultFile.ts
+msgid "This backup file is damaged: an object does not match its checksum."
+msgstr "This backup file is damaged: an object does not match its checksum."
+
+#: src/helpers/managed/vaultFile.ts
+msgid "This backup file is from a different workspace than the one you are restoring."
+msgstr "This backup file is from a different workspace than the one you are restoring."
+
+#: src/helpers/managed/vaultFile.ts
+msgid "This backup file was sealed under a different encryption key than this workspace uses now, so it cannot be opened."
+msgstr "This backup file was sealed under a different encryption key than this workspace uses now, so it cannot be opened."
+
+#: src/helpers/managed/vaultFile.ts
+msgid "The list of objects and their contents do not match."
+msgstr "The list of objects and their contents do not match."
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Older backup copies are removed, and so is the edit history of the backup: it keeps only the current state of every item. Restoring from it brings back your workspace as it is now, without its version history. Items you deleted recently can no longer be recovered from the backup. Your devices keep their own edit history and your workspace is not changed."
+msgstr "Older backup copies are removed, and so is the edit history of the backup: it keeps only the current state of every item. Restoring from it brings back your workspace as it is now, without its version history. Items you deleted recently can no longer be recovered from the backup. Your devices keep their own edit history and your workspace is not changed."
+
+#: src/components/ConnectDevice.tsx
+msgid "Could not reach that address."
+msgstr "Could not reach that address."
+
+#: src/components/ConnectDevice.tsx
+msgid "That address answers, but it is not an AtomicServer."
+msgstr "That address answers, but it is not an AtomicServer."
+
+#: src/components/SideBar/AccountMenu.tsx
+msgid "Could not open Trash"
+msgstr "Could not open Trash"
+
+#: src/components/SideBar/AccountMenu.tsx
+msgid "Items you deleted from this drive"
+msgstr "Items you deleted from this drive"
+
+#: src/views/DriveUnavailable.tsx
+msgid "This item hasn't reached this device yet"
+msgstr "This item hasn't reached this device yet"
+
+#: src/views/DriveUnavailable.tsx
+msgid "Your private drive is kept on your devices. It will appear here once the server or your other device answers."
+msgstr "Your private drive is kept on your devices. It will appear here once the server or your other device answers."
+
+#: src/views/DriveUnavailable.tsx
+msgid "This device hasn't kept a copy of the drive and isn't connected to its server yet. It will open as soon as the server answers."
+msgstr "This device hasn't kept a copy of the drive and isn't connected to its server yet. It will open as soon as the server answers."
+
+#: src/views/DriveUnavailable.tsx
+msgid "Not connected to the server yet."
+msgstr "Not connected to the server yet."
+
+#: src/actions/resourceActions.tsx
+msgid "Move to Trash"
+msgstr "Move to Trash"
+
+#: src/actions/resourceActions.tsx
+msgid "Move this resource to the Trash. You can restore it later."
+msgstr "Move this resource to the Trash. You can restore it later."
+
+#. 0: error instanceof Error ? error.message \\: 'unknown error'
+#: src/actions/resourceActions.tsx
+msgid "Could not move to Trash: {0}"
+msgstr "Could not move to Trash: {0}"
+
+#: src/actions/resourceActions.tsx
+msgid "Delete this resource permanently. This cannot be undone."
+msgstr "Delete this resource permanently. This cannot be undone."
+
+#: src/chunks/RTE/useFormattingToolbarVisible.tsx
+msgid "Hide formatting toolbar"
+msgstr "Hide formatting toolbar"
+
+#: src/components/BrowserPeerPanel.tsx
+msgid "Free browser sync is meant for small groups of up to 4 people. For more people, use a Cloud Server on atomic.place."
+msgstr "Free browser sync is meant for small groups of up to 4 people. For more people, use a Cloud Server on atomic.place."
+
+#: src/views/NotificationPage.tsx
+msgid "Open conversation"
+msgstr "Open conversation"
+
+#: src/views/NotificationPage.tsx
+msgid "All notifications"
+msgstr "All notifications"
+
+#: src/views/Drive/DriveHome.tsx
+msgid "Currently on this drive"
+msgstr "Currently on this drive"
+
+#: src/views/Drive/DriveHome.tsx
+msgid "Activity will show up here"
+msgstr "Activity will show up here"
+
+#: src/views/Drive/DriveHome.tsx
+msgid "Show less"
+msgstr "Show less"
+
+#: src/views/Drive/DriveHome.tsx
+msgid "Show all"
+msgstr "Show all"
+
+#: src/views/Drive/DrivePage.tsx
+msgid "<0/> Drive settings"
+msgstr "<0/> Drive settings"
+
+#: src/views/Drive/DrivePage.tsx
+msgid "Nothing here yet."
+msgstr "Nothing here yet."
+
+#: src/views/Drive/DriveSettingsDialog.tsx
+msgid "Drive settings"
+msgstr "Drive settings"
+
+#: src/views/Drive/DriveSettingsDialog.tsx
+msgid "Server members meet through for free browser sync."
+msgstr "Server members meet through for free browser sync."
+
+#: src/views/Drive/DriveSettingsDialog.tsx
+msgid "Browser sync server"
+msgstr "Browser sync server"
+
+#: src/components/SideBar/DriveSwitcher.tsx
+msgid "View all drives"
+msgstr "View all drives"
+
+#. 0: formatBytes(usage.pending_bytes)
+#: src/components/Vault/VaultStorage.tsx
+msgid "Uploads in progress: {0}. "
+msgstr "Uploads in progress: {0}. "
+
+#. 0: formatBytes(usage.unaccounted_bytes)
+#: src/components/Vault/VaultStorage.tsx
+msgid "Leftovers, cleaned up automatically: {0}."
+msgstr "Leftovers, cleaned up automatically: {0}."
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "What the change history holds"
+msgstr "What the change history holds"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Discard history…"
+msgstr "Discard history…"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Compress history"
+msgstr "Compress history"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Compressing takes a fresh snapshot of the backup and frees the changes it covers. Your workspace is not touched, and recently deleted items stay recoverable."
+msgstr "Compressing takes a fresh snapshot of the backup and frees the changes it covers. Your workspace is not touched, and recently deleted items stay recoverable."
+
+#. 0: formatBytes(usage.used_bytes); 1: ' '; 2: formatBytes(usage.quota_bytes)
+#: src/components/Vault/VaultStorage.tsx
+msgid "{0} of{1} {2} used"
+msgstr "{0} of{1} {2} used"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Full copies that restore fast"
+msgstr "Full copies that restore fast"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Every edit since a snapshot"
+msgstr "Every edit since a snapshot"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Uploads attached to your pages"
+msgstr "Uploads attached to your pages"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Search index and supporting data"
+msgstr "Search index and supporting data"
+
+#. 0: s.count
+#: src/components/Vault/VaultStorage.tsx
+msgid "{0} pack"
+msgstr "{0} pack"
+
+#. 0: s.count
+#: src/components/Vault/VaultStorage.tsx
+msgid "{0} packs"
+msgstr "{0} packs"
+
+#. 0: s.count
+#: src/components/Vault/VaultStorage.tsx
+msgid "{0} file"
+msgstr "{0} file"
+
+#. 0: s.count
+#: src/components/Vault/VaultStorage.tsx
+msgid "{0} files"
+msgstr "{0} files"
+
+#: src/components/Vault/VaultStorage.tsx
+#: src/components/Vault/VaultStorage.tsx
+msgid "Always kept"
+msgstr "Always kept"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Changes not in a snapshot yet"
+msgstr "Changes not in a snapshot yet"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Kept so deleted items can be recovered"
+msgstr "Kept so deleted items can be recovered"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Dropped by Discard history"
+msgstr "Dropped by Discard history"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Can be freed now"
+msgstr "Can be freed now"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Compress history removes this"
+msgstr "Compress history removes this"
+
+#. 0: who
+#: src/actions/resourceActions.tsx
+msgid "Leave {0}? This only removes it from your list. The other members keep the conversation."
+msgstr "Leave {0}? This only removes it from your list. The other members keep the conversation."
+
+#: src/actions/resourceActions.tsx
+#: src/actions/resourceActions.tsx
+msgid "Leave conversation"
+msgstr "Leave conversation"
+
+#: src/actions/resourceActions.tsx
+msgid "Remove this conversation from your list."
+msgstr "Remove this conversation from your list."
+
+#: src/actions/resourceActions.tsx
+msgid "Confirm Leave"
+msgstr "Confirm Leave"
+
+#: src/helpers/syncProblem.ts
+msgid "This server does not have this drive"
+msgstr "This server does not have this drive"
+
+#. 0: serverName
+#: src/helpers/syncProblem.ts
+msgid "{0} refuses changes to it, so they stay on this device for now. Connect a device that has this drive, or turn off server sync for it to keep working here."
+msgstr "{0} refuses changes to it, so they stay on this device for now. Connect a device that has this drive, or turn off server sync for it to keep working here."
+
+#: src/helpers/syncProblem.ts
+msgid "You can’t change this drive on the server"
+msgstr "You can’t change this drive on the server"
+
+#: src/helpers/syncProblem.ts
+msgid "This drive could not sync"
+msgstr "This drive could not sync"
+
+#: src/components/OverlayContainer.tsx
+msgid "Chats"
+msgstr "Chats"
+
+#: src/components/SyncProblemBanner.tsx
+msgid "Show technical details"
+msgstr "Show technical details"
+
+#: src/routes/SyncRoute.tsx
+msgid "Could not change drive sync."
+msgstr "Could not change drive sync."
+
+#: src/routes/SyncRoute.tsx
+msgid "This server doesn’t host this drive, so it refuses its changes. Set up Cloud Server to sync it here, or turn off sync to keep it on this device only."
+msgstr "This server doesn’t host this drive, so it refuses its changes. Set up Cloud Server to sync it here, or turn off sync to keep it on this device only."
+
+#: src/routes/SyncRoute.tsx
+msgid "Sync this drive with this server"
+msgstr "Sync this drive with this server"
+
+#: src/routes/SyncRoute.tsx
+msgid "Off stops server sync for this drive on this browser. The server’s existing copy and other devices are unchanged; browser sync can still connect open browsers."
+msgstr "Off stops server sync for this drive on this browser. The server’s existing copy and other devices are unchanged; browser sync can still connect open browsers."
+
+#: src/routes/SyncRoute.tsx
+msgid "Drive sync off"
+msgstr "Drive sync off"
+
+#: src/routes/SyncRoute.tsx
+msgid "Open a drive to see whether it can be hosted."
+msgstr "Open a drive to see whether it can be hosted."
+
+#: src/routes/SyncRoute.tsx
+msgid "This device doesn’t have this drive yet. Pair the device that does, and you can host it from here."
+msgstr "This device doesn’t have this drive yet. Pair the device that does, and you can host it from here."
+
+#: src/routes/SyncRoute.tsx
+msgid "Checking whether this drive is hosted…"
+msgstr "Checking whether this drive is hosted…"
+
+#. 0: PRODUCT_NAME
+#: src/routes/SyncRoute.tsx
+msgid "Sign in to {0} to see whether this drive is hosted."
+msgstr "Sign in to {0} to see whether this drive is hosted."
+
+#: src/routes/SyncRoute.tsx
+msgid "Cloud Server received this drive. Your source server is still connected."
+msgstr "Cloud Server received this drive. Your source server is still connected."
+
+#: src/routes/SyncRoute.tsx
+msgid "Connected to Cloud Server. Syncing this drive…"
+msgstr "Connected to Cloud Server. Syncing this drive…"
+
+#: src/routes/SyncRoute.tsx
+msgid "This drive is on Cloud Server. This device still syncs with its old server."
+msgstr "This drive is on Cloud Server. This device still syncs with its old server."
+
+#: src/routes/SyncRoute.tsx
+msgid "Moving this drive to Cloud Server. It switches on by itself; you can keep working."
+msgstr "Moving this drive to Cloud Server. It switches on by itself; you can keep working."
+
+#. 0: PRODUCT_NAME
+#: src/routes/SyncRoute.tsx
+msgid "{0} added Cloud Server to this drive. It waits for your consent."
+msgstr "{0} added Cloud Server to this drive. It waits for your consent."
+
+#: src/routes/SyncRoute.tsx
+msgid "This drive’s plan includes Cloud Server. It waits for your consent."
+msgstr "This drive’s plan includes Cloud Server. It waits for your consent."
+
+#. 0: PRODUCT_NAME
+#: src/routes/SyncRoute.tsx
+msgid "Sign in to your {0} account to check email recovery. Signing in to this drive with a passkey or secret does not by itself connect your cloud account."
+msgstr "Sign in to your {0} account to check email recovery. Signing in to this drive with a passkey or secret does not by itself connect your cloud account."
+
+#. 0: managedAccount.email
+#: src/routes/SyncRoute.tsx
+msgid "{0}. No recovery backup stored, so losing every device loses this drive."
+msgstr "{0}. No recovery backup stored, so losing every device loses this drive."
+
+#: src/routes/SyncRoute.tsx
+msgid "Everything in Cloud Vault, plus a hosted drive on atomic.place, always online. Our servers process what you put here."
+msgstr "Everything in Cloud Vault, plus a hosted drive on atomic.place, always online. Our servers process what you put here."
+
+#: src/routes/SyncRoute.tsx
+msgid "<0>Before you turn it on:</0> unlike Cloud Vault, Cloud Server stores a readable, unencrypted copy of this drive on our servers, so we can run search, shareable links and the API for it. Your sharing permissions still control who else sees it, and you can turn it off at any time."
+msgstr "<0>Before you turn it on:</0> unlike Cloud Vault, Cloud Server stores a readable, unencrypted copy of this drive on our servers, so we can run search, shareable links and the API for it. Your sharing permissions still control who else sees it, and you can turn it off at any time."
+
+#: src/routes/SyncRoute.tsx
+msgid "If another device has this drive, scan the code below to connect it."
+msgstr "If another device has this drive, scan the code below to connect it."
+
+#: src/routes/SyncRoute.tsx
+msgid "If another device has this drive, you can connect it."
+msgstr "If another device has this drive, you can connect it."
+
+#: src/routes/SyncRoute.tsx
+msgid "This drive could not be read on this device"
+msgstr "This drive could not be read on this device"
+
+#: src/routes/SyncRoute.tsx
+msgid "Sync this drive"
+msgstr "Sync this drive"
+
+#: src/routes/SyncRoute.tsx
+msgid "This drive hasn’t been synced. It’s safe here, but not backed up and not on your other devices."
+msgstr "This drive hasn’t been synced. It’s safe here, but not backed up and not on your other devices."
+
+#: src/routes/SyncRoute.tsx
+msgid "These sync your other drives — not this drive."
+msgstr "These sync your other drives — not this drive."
+
+#: src/views/PeerInvitePage.tsx
+msgid "Local storage did not open. Reload the page to try again."
+msgstr "Local storage did not open. Reload the page to try again."
+
+#: src/components/Share/ShareDialog.tsx
+msgid "This drive is not on a server. People you invite can open it only while one of your devices has it open in a browser."
+msgstr "This drive is not on a server. People you invite can open it only while one of your devices has it open in a browser."
+
+#: src/components/Share/ShareDialog.tsx
+msgid "A Cloud Server keeps this drive online for everyone, so nobody has to keep a browser open."
+msgstr "A Cloud Server keeps this drive online for everyone, so nobody has to keep a browser open."
+
+#. 0: CLOUD_SERVER_PRICE
+#: src/components/Share/ShareDialog.tsx
+msgid "Upgrade to Cloud Server from {0}"
+msgstr "Upgrade to Cloud Server from {0}"
+
+#: src/components/SideBar/MessagesPanel.tsx
+#: src/components/SideBar/MessagesPanel.tsx
+msgid "Search messages"
+msgstr "Search messages"
+
+#: src/components/SideBar/MessagesPanel.tsx
+msgid "Search by name"
+msgstr "Search by name"
+
+#: src/components/SideBar/MessagesPanel.tsx
+msgid "No matches"
+msgstr "No matches"
+
+#: src/components/SideBar/useSidebarDnd.ts
+msgid "Removed from your messages"
+msgstr "Removed from your messages"
+
+#: src/views/DriveUnavailable.tsx
+msgid "Bringing this drive to this device"
+msgstr "Bringing this drive to this device"
+
+#. 0: Math.round(vault.restoreProgress * 100)
+#: src/components/Vault/VaultRestoreAction.tsx
+msgid "Restoring this drive… {0}%"
+msgstr "Restoring this drive… {0}%"
+
+#: src/components/Vault/VaultRestoreAction.tsx
+msgid "Restoring this drive…"
+msgstr "Restoring this drive…"
+
+#: src/components/Vault/VaultRestoreAction.tsx
+msgid "This drive has an encrypted backup in Cloud Vault."
+msgstr "This drive has an encrypted backup in Cloud Vault."
+
+#: src/views/AgentPage.tsx
+msgid "Opening..."
+msgstr "Opening..."
+
+#: src/views/AgentPage.tsx
+msgid "<0/> Send message"
+msgstr "<0/> Send message"
+
+#: src/views/AgentPage.tsx
+#: src/views/AgentPage.tsx
+msgid "Add a note"
+msgstr "Add a note"
+
+#. 0: name
+#: src/views/AgentPage.tsx
+msgid "Only you can see these. {0} cannot."
+msgstr "Only you can see these. {0} cannot."
+
+#: src/views/AgentPage.tsx
+#: src/views/AgentPage.tsx
+msgid "Your notes"
+msgstr "Your notes"
+
+#: src/chunks/FormBuilder/ShareLinkPanel.tsx
+msgid "Upgrade to a Cloud Server to publish and share this form."
+msgstr "Upgrade to a Cloud Server to publish and share this form."
+
+#: src/actions/resourceActions.tsx
+msgid "Start AI Chat"
+msgstr "Start AI Chat"
+
+#: src/actions/resourceActions.tsx
+msgid "Chat with AI about this resource"
+msgstr "Chat with AI about this resource"
+
+#: src/actions/resourceActions.tsx
+msgid "Add a comment"
+msgstr "Add a comment"
+
+#: src/actions/resourceActions.tsx
+msgid "Open the comments for this resource"
+msgstr "Open the comments for this resource"
+
+#: src/chunks/TableEditor/Cell.tsx
+msgid "Row menu"
+msgstr "Row menu"
+
+#: src/views/Drive/DriveHome.tsx
+msgid "Commented"
+msgstr "Commented"
+
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "Live duration"
+msgstr "Live duration"
+
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "Time between"
+msgstr "Time between"
+
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "Days since"
+msgstr "Days since"
+
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "Total"
+msgstr "Total"
+
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "Next due"
+msgstr "Next due"
+
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "Days until next birthday"
+msgstr "Days until next birthday"
+
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "Birthday soon"
+msgstr "Birthday soon"
+
+#. 0: missing; 1: suggestion ? ` Did you mean "${suggestion}"?` \\: ''
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "There is no column \"{0}\".{1}"
+msgstr "There is no column \"{0}\".{1}"
+
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "Formula"
+msgstr "Formula"
+
+#. 0: Object.keys(slugs).join(', ') || 'none yet'
+#: src/chunks/TablePage/DerivedColumnDialog.tsx
+msgid "Combine columns with + - * / and functions: now(), coalesce(a, b), days(ms), addDays(date, n), daysUntilAnniversary(date), min, max, if(test, a, b). Dates are milliseconds, a missing value leaves the cell empty, and 1/2 is 0 (write 1.0/2). Columns you can use: {0}."
+msgstr "Combine columns with + - * / and functions: now(), coalesce(a, b), days(ms), addDays(date, n), daysUntilAnniversary(date), min, max, if(test, a, b). Dates are milliseconds, a missing value leaves the cell empty, and 1/2 is 0 (write 1.0/2). Columns you can use: {0}."
+
+#. 0: managedBy
+#: src/components/Cloud/CloudServerDetails.tsx
+msgid "This drive is on Cloud Server (managed by {0}). Only that account can change the plan or the web address."
+msgstr "This drive is on Cloud Server (managed by {0}). Only that account can change the plan or the web address."
+
+#: src/components/Cloud/CloudServerDetails.tsx
+msgid "This drive is on Cloud Server (managed by another account). Only that account can change the plan or the web address."
+msgstr "This drive is on Cloud Server (managed by another account). Only that account can change the plan or the web address."
+
+#: src/components/AI/LocalNetworkNotice.tsx
+msgid "Ollama runs on your own computer. Your browser will ask whether this site may access other apps and services on this device. That is only used to talk to Ollama; nothing else on your network is scanned."
+msgstr "Ollama runs on your own computer. Your browser will ask whether this site may access other apps and services on this device. That is only used to talk to Ollama; nothing else on your network is scanned."
+
+#: src/components/AI/ProviderStatus.tsx
+#: src/components/AI/ProviderStatus.tsx
+msgid "Waiting for permission"
+msgstr "Waiting for permission"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Delete"
+msgstr "Delete"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Older snapshots are removed automatically."
+msgstr "Older snapshots are removed automatically."
+
+#. 0: formatBytes(deleteSnapshot.bytes)
+#: src/components/Vault/VaultStorage.tsx
+msgid "This snapshot uses {0}. The newest snapshot and your workspace are not touched."
+msgstr "This snapshot uses {0}. The newest snapshot and your workspace are not touched."
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Delete this snapshot?"
+msgstr "Delete this snapshot?"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Delete snapshot"
+msgstr "Delete snapshot"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Could not delete the snapshot."
+msgstr "Could not delete the snapshot."
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "The next backup from that browser or app adds them"
+msgstr "The next backup from that browser or app adds them"
+
+#: src/actions/resourceActions.tsx
+msgid "Move..."
+msgstr "Move..."
+
+#: src/actions/resourceActions.tsx
+msgid "Move this resource to another parent."
+msgstr "Move this resource to another parent."
+
+#: src/components/MoveResourceDialog.tsx
+#: src/components/MoveResourceDialog.tsx
+msgid "Move"
+msgstr "Move"
+
+#: src/components/MoveResourceDialog.tsx
+msgid "You don't have write access to that location."
+msgstr "You don't have write access to that location."
+
+#: src/components/MoveResourceDialog.tsx
+msgid "Access follows the new parent: who can see or edit this may change."
+msgstr "Access follows the new parent: who can see or edit this may change."
+
+#: src/helpers/moveResource.ts
+msgid "A resource can't be moved into itself."
+msgstr "A resource can't be moved into itself."
+
+#: src/helpers/moveResource.ts
+msgid "A resource can't be moved into something inside it."
+msgstr "A resource can't be moved into something inside it."
+
+#: src/components/MoveResourceDialog.tsx
+msgid "You don't have write access to the original."
+msgstr "You don't have write access to the original."
+
+#: src/components/MoveResourceDialog.tsx
+msgid "The original is moved to the Trash of its drive."
+msgstr "The original is moved to the Trash of its drive."
+
+#: src/components/MoveResourceDialog.tsx
+msgid "Moving to another drive"
+msgstr "Moving to another drive"
+
+#: src/components/MoveResourceDialog.tsx
+msgid "This makes a copy with a new identifier, so its link changes. Links and references elsewhere keep pointing at the old identifier; they only keep working through the redirect. Access follows the new parent."
+msgstr "This makes a copy with a new identifier, so its link changes. Links and references elsewhere keep pointing at the old identifier; they only keep working through the redirect. Access follows the new parent."
+
+#: src/components/MoveResourceDialog.tsx
+msgid "<0/> Leave a redirect at the old location"
+msgstr "<0/> Leave a redirect at the old location"
+
+#: src/components/ConnectDrivePicker.tsx
+msgid "All drives"
+msgstr "All drives"
+
+#: src/routes/SyncRoute.tsx
+msgid "Cloud Server isn’t on for this drive. This server only accepts it for a short while; after that it stops syncing. Set up Cloud Server to keep it here, or turn off sync to keep it on this device only."
+msgstr "Cloud Server isn’t on for this drive. This server only accepts it for a short while; after that it stops syncing. Set up Cloud Server to keep it here, or turn off sync to keep it on this device only."
+
+#: src/routes/SyncRoute.tsx
+msgid "Not hosted yet"
+msgstr "Not hosted yet"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Talk to the AI"
+msgstr "Talk to the AI"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Ask it to find, write or organize things in your drive"
+msgstr "Ask it to find, write or organize things in your drive"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Start a chat"
+msgstr "Start a chat"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Invite someone"
+msgstr "Invite someone"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Invite"
+msgstr "Invite"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Save your work"
+msgstr "Save your work"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Sign up with your email, save your secret or connect a device"
+msgstr "Sign up with your email, save your secret or connect a device"
+
+#: src/views/Drive/DriveSettingsDialog.tsx
+#: src/views/Drive/GettingStartedCard.tsx
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Getting started"
+msgstr "Getting started"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Needs an AI source: your own key or Ollama"
+msgstr "Needs an AI source: your own key or Ollama"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Not done yet"
+msgstr "Not done yet"
+
+#: src/views/getting-started/WorkspaceLoading.tsx
+msgid "Setting up your workspace on this device…"
+msgstr "Setting up your workspace on this device…"
+
+#: src/components/ConnectDrivePicker.tsx
+msgid "Only on your devices"
+msgstr "Only on your devices"
+
+#. 0: titles; 1: app; 2: node
+#: src/helpers/connectableDrives.ts
+msgid "{0} only lives on your devices, so {1} cannot reach it through {2}. Deselect it, or turn on Cloud Server for that drive."
+msgstr "{0} only lives on your devices, so {1} cannot reach it through {2}. Deselect it, or turn on Cloud Server for that drive."
+
+#. 0: app; 1: titles; 2: text(other[0].error)
+#: src/helpers/connectableDrives.ts
+msgid "Could not give {0} access to {1}: {2}"
+msgstr "Could not give {0} access to {1}: {2}"
+
+#: src/routes/AuthorizeMcpRoute.tsx
+msgid "A drive"
+msgstr "A drive"
+
+#: src/components/Share/PeopleWithAccess.tsx
+msgid "Invited"
+msgstr "Invited"
+
+#. 0: invite.email
+#: src/components/Share/PeopleWithAccess.tsx
+msgid "Remove invite for {0}"
+msgstr "Remove invite for {0}"
+
+#: src/components/Vault/VaultStorage.tsx
+msgid "Latest changes"
+msgstr "Latest changes"
+
+#. 0: subject
+#: src/views/OntologyPage/sortSubjectList.ts
+msgid "Timed out fetching {0}"
+msgstr "Timed out fetching {0}"
+
+#: src/components/MetaSetter.tsx
+#: src/components/SideBar/AccountMenu.tsx
+#: src/routes/IntegrationStore.tsx
+msgid "Apps"
+msgstr "Apps"
+
+#: src/routes/IntegrationStore.tsx
+msgid "Install apps into your drive, connect integrations and keep your work in sync. Add automations when you need them."
+msgstr "Install apps into your drive, connect integrations and keep your work in sync. Add automations when you need them."
+
+#: src/routes/IntegrationStore.tsx
+msgid "Search apps"
+msgstr "Search apps"
+
+#: src/routes/IntegrationStore.tsx
+msgid "Search apps, integrations, domains or standards"
+msgstr "Search apps, integrations, domains or standards"
+
+#: src/routes/IntegrationStore.tsx
+msgid "Loading apps…"
+msgstr "Loading apps…"
+
+#: src/routes/IntegrationStore.tsx
+msgid "Discover apps"
+msgstr "Discover apps"
+
+#: src/chunks/PluginRuns/AddMarketplaceDialog.tsx
+msgid "That marketplace link is not a valid catalog URL."
+msgstr "That marketplace link is not a valid catalog URL."
+
+#. 0: host
+#: src/chunks/PluginRuns/AddMarketplaceDialog.tsx
+msgid "Add marketplace {0}?"
+msgstr "Add marketplace {0}?"
+
+#: src/chunks/PluginRuns/AddMarketplaceDialog.tsx
+msgid "Apps from it can be installed into your drives. Only add marketplaces you trust."
+msgstr "Apps from it can be installed into your drives. Only add marketplaces you trust."
+
+#: src/chunks/PluginRuns/AddMarketplaceDialog.tsx
+msgid "Add marketplace"
+msgstr "Add marketplace"
+
+#. 0: sharing.app.name
+#: src/chunks/PluginRuns/CatalogApps.tsx
+msgid "QR code for the {0} link"
+msgstr "QR code for the {0} link"
+
+#: src/components/Settings/IntegrationSettings.tsx
+msgid "<0/> Remove"
+msgstr "<0/> Remove"
+
+#: src/components/Settings/IntegrationSettings.tsx
+#: src/components/Settings/IntegrationSettings.tsx
+msgid "Marketplaces"
+msgstr "Marketplaces"
+
+#: src/components/Settings/IntegrationSettings.tsx
+msgid "Apps from these catalogs are offered next to the one above. When two have an app with the same name, the one listed first wins. This setting is saved in this browser."
+msgstr "Apps from these catalogs are offered next to the one above. When two have an app with the same name, the one listed first wins. This setting is saved in this browser."
+
+#: src/components/Settings/IntegrationSettings.tsx
+msgid "Add marketplace URL"
+msgstr "Add marketplace URL"
+
+#: src/components/SideBar/AccountMenu.tsx
+msgid "Discover apps and integrations"
+msgstr "Discover apps and integrations"
+
+#: src/helpers/managed/vaultAutoBackup.ts
+msgid "Cloud Vault is full, so this drive is not being backed up. Free up space or upgrade your plan."
+msgstr "Cloud Vault is full, so this drive is not being backed up. Free up space or upgrade your plan."
+
+#: src/embed/MeetingChatOverlay.tsx
+msgid "Close chat"
+msgstr "Close chat"
+
+#: src/embed/mockHost.ts
+msgid "Mock drive"
+msgstr "Mock drive"
+
+#: src/embed/mockHost.ts
+msgid "A drive that only exists in this page."
+msgstr "A drive that only exists in this page."
+
+#: src/embed/mockHost.ts
+msgid "A folder"
+msgstr "A folder"
+
+#: src/embed/mockHost.ts
+msgid "A resource inside the folder"
+msgstr "A resource inside the folder"
+
+#: src/embed/mockHost.ts
+msgid "Rendered by ResourcePage, with nothing around it."
+msgstr "Rendered by ResourcePage, with nothing around it."
+
+#: src/routes/AppSettings.tsx
+msgid "Show icons in the sidebar <0>Show icons and pictures next to items in the sidebar</0>"
+msgstr "Show icons in the sidebar <0>Show icons and pictures next to items in the sidebar</0>"
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "This link has no code. Start again from your device."
+msgstr "This link has no code. Start again from your device."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "That device did not ask for your identity."
+msgstr "That device did not ask for your identity."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "This code was already used. Ask the device for a new one."
+msgstr "This code was already used. Ask the device for a new one."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Could not look up that code."
+msgstr "Could not look up that code."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Could not unlock your backup."
+msgstr "Could not unlock your backup."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Could not send your identity."
+msgstr "Could not send your identity."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "This account has no backup yet. Create it in the web app first."
+msgstr "This account has no backup yet. Create it in the web app first."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "This backup cannot be opened here. Restore it in the web app first."
+msgstr "This backup cannot be opened here. Restore it in the web app first."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Could not read your backup."
+msgstr "Could not read your backup."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "No account service is known here."
+msgstr "No account service is known here."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Sign in to continue"
+msgstr "Sign in to continue"
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Sign in to your account to send your identity to your device."
+msgstr "Sign in to your account to send your identity to your device."
+
+#. 0: phase.link.deviceName
+#: src/routes/SendIdentityRoute.tsx
+msgid "Send your identity to {0}?"
+msgstr "Send your identity to {0}?"
+
+#. 0: code
+#: src/routes/SendIdentityRoute.tsx
+msgid "Only continue if you started this on your own device just now and it shows code {0}."
+msgstr "Only continue if you started this on your own device just now and it shows code {0}."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Send with this code"
+msgstr "Send with this code"
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Unlock your backup"
+msgstr "Unlock your backup"
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Go back to your device."
+msgstr "Go back to your device."
+
+#: src/routes/SendIdentityRoute.tsx
+msgid "Could not send your identity"
+msgstr "Could not send your identity"
+
+#: src/components/SideBar/SideBarDrive.tsx
+msgid "Switch Drive"
+msgstr "Switch Drive"
+
+#: src/views/getting-started/GettingStartedFlow.tsx
+msgid "Add your work from this browser to your account?"
+msgstr "Add your work from this browser to your account?"
+
+#: src/views/getting-started/GettingStartedFlow.tsx
+msgid "Your account gets access to it. Nothing is copied or deleted."
+msgstr "Your account gets access to it. Nothing is copied or deleted."
+
+#: src/views/getting-started/GettingStartedFlow.tsx
+msgid "Add to my account"
+msgstr "Add to my account"
+
+#: src/views/getting-started/GettingStartedFlow.tsx
+msgid "Don't add, keep it in this browser only"
+msgstr "Don't add, keep it in this browser only"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Give your drive a name: a team, company, class or household"
+msgstr "Give your drive a name: a team, company, class or household"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Start a drive"
+msgstr "Start a drive"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Share a drive with a teammate or a friend"
+msgstr "Share a drive with a teammate or a friend"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Start a drive first"
+msgstr "Start a drive first"
+
+#: src/chunks/Templates/TemplateChat.tsx
+msgid "Nothing is created until you add it."
+msgstr "Nothing is created until you add it."
+
+#: src/chunks/Templates/TemplateChat.tsx
+msgid "Add to this drive"
+msgstr "Add to this drive"
+
+#: src/chunks/Templates/TemplateChat.tsx
+msgid "Or describe what you need"
+msgstr "Or describe what you need"
+
+#: src/views/Drive/EmptyDriveStart.tsx
+msgid "Start with"
+msgstr "Start with"
+
+#: src/views/Drive/EmptyDriveStart.tsx
+msgid "Adding…"
+msgstr "Adding…"
+
+#: src/views/Drive/EmptyDriveStart.tsx
+msgid "Use this starter"
+msgstr "Use this starter"
+
+#: src/views/Drive/EmptyDriveStart.tsx
+msgid "Or fill this drive with a starter"
+msgstr "Or fill this drive with a starter"
+
+#: src/views/Drive/EmptyDriveStart.tsx
+msgid "Start this drive"
+msgstr "Start this drive"
+
+#: src/views/Drive/GettingStartedCard.tsx
+msgid "Give it a name, then fill it with a starter"
+msgstr "Give it a name, then fill it with a starter"
+
+#: src/views/ErrorPage.tsx
+msgid "It was deleted on this device."
+msgstr "It was deleted on this device."
+
+#: src/views/Drive/DriveSettingsDialog.tsx
+msgid "Show Getting started on my drives"
+msgstr "Show Getting started on my drives"

@@ -50,6 +50,9 @@ const MARKS = {
   canvas: path.join(BRAND_DIR, 'src', 'canvas-mark.svg'),
 };
 
+/** Marks drawn on a coloured tile fill opaque variants with it, not white. */
+const TILE_BACKGROUND = { [MARKS.place]: '#111111' };
+
 /* ------------------------------------------------------------------ */
 /* Rendering primitives                                                */
 /* ------------------------------------------------------------------ */
@@ -58,11 +61,15 @@ const MARKS = {
  * Variants:
  *   'alpha'    — transparent background. Web favicons, Windows, Android.
  *   'flat'     — composited on white, alpha stripped. iOS rejects icons
- *                with an alpha channel at App Store submission.
+ *                with an alpha channel at App Store submission. The Place
+ *                mark sits on its own dark tile, so its flat and maskable
+ *                variants fill with the tile colour (see TILE_BACKGROUND):
+ *                white would show as corners around the rounded tile.
  *   'maskable' — opaque, mark shrunk to 62% so it clears the Android
  *                maskable safe zone (the centre 80%-diameter circle).
  */
 function render(markPath, size, variant, outPath) {
+  const background = variant === 'alpha' ? 'none' : (TILE_BACKGROUND[markPath] ?? 'white');
   // `size` is a side length, or [w, h] for the one non-square target
   // (the wide Windows tile), where the square mark gets letterboxed.
   const [w, h] = Array.isArray(size) ? size : [size, size];
@@ -79,7 +86,7 @@ function render(markPath, size, variant, outPath) {
 
   // Transparent padding for tiles, which take their colour from
   // browserconfig.xml's <TileColor>; white only where alpha is dropped.
-  const args = ['-background', variant === 'alpha' ? 'none' : 'white'];
+  const args = ['-background', background];
   if (variant === 'maskable' || inner !== w || inner !== h) {
     args.push(raw, '-gravity', 'center', '-extent', `${w}x${h}`);
   } else {
@@ -256,18 +263,18 @@ const TARGETS = [
     files: [{ kind: 'svg', to: 'logo-square.svg' }],
   },
 
-  /* Atomic Canvas — its own mark, same family. See brand/src/canvas-mark.svg. */
+  /* atomic.place (the Flutter app) — the regular Atomic Place mark. */
   {
-    mark: 'canvas',
+    mark: 'place',
     root: SERVER_ROOT,
-    label: 'atomic-canvas: web',
+    label: 'atomic.place app: web',
     dir: 'flutter/web',
     files: [png('favicon.png', 16)],
   },
   {
-    mark: 'canvas',
+    mark: 'place',
     root: SERVER_ROOT,
-    label: 'atomic-canvas: web PWA icons',
+    label: 'atomic.place app: web PWA icons',
     dir: 'flutter/web/icons',
     files: [
       png('Icon-192.png', 192),
@@ -277,9 +284,9 @@ const TARGETS = [
     ],
   },
   {
-    mark: 'canvas',
+    mark: 'place',
     root: SERVER_ROOT,
-    label: 'atomic-canvas: iOS',
+    label: 'atomic.place app: iOS',
     dir: 'flutter/ios/Runner/Assets.xcassets/AppIcon.appiconset',
     files: [
       png('Icon-App-20x20@1x.png', 20, 'flat'),
@@ -302,9 +309,9 @@ const TARGETS = [
   ...['mdpi:48', 'hdpi:72', 'xhdpi:96', 'xxhdpi:144', 'xxxhdpi:192'].map(d => {
     const [density, size] = d.split(':');
     return {
-      mark: 'canvas',
+      mark: 'place',
       root: SERVER_ROOT,
-      label: `atomic-canvas: Android ${density}`,
+      label: `atomic.place app: Android ${density}`,
       dir: `flutter/android/app/src/main/res/mipmap-${density}`,
       files: [png('ic_launcher.png', Number(size))],
     };

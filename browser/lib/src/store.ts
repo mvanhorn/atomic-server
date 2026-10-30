@@ -10,6 +10,10 @@ import {
 import { serializeDeterministically as serializePeerCommit } from './commit.js';
 import { taskSchema } from './task-schema.js';
 import {
+  sharedVocabularyOntologies,
+  sharedVocabularyProperties,
+} from './shared-vocabularies.js';
+import {
   mergeHistoryAttributions,
   parseHistoryAttribution,
   type HistoryAttribution,
@@ -35,19 +39,24 @@ import {
 import { datatypeFromUrl, type Datatype } from './datatypes.js';
 import {
   AtomicError,
+  asError,
   RequestCancelledError,
   ErrorType,
   isTransportError,
   LOCAL_ONLY_NOT_FOUND_MESSAGE,
+  NOT_IN_HOST_STORE_MESSAGE,
   NOT_AVAILABLE_LOCALLY_MESSAGE,
+  NOT_AVAILABLE_SERVER_UNREACHABLE_MESSAGE,
 } from './error.js';
 import { EventManager } from './EventManager.js';
 import { hasBrowserAPI } from './hasBrowserAPI.js';
 import { collections } from './ontologies/collections.js';
 import { commits } from './ontologies/commits.js';
 import { core } from './ontologies/core.js';
+import * as trashOps from './trash.js';
 import { server, type Server } from './ontologies/server.js';
 import { notifications } from './ontologies/notifications.js';
+import { contacts } from './ontologies/contacts.js';
 import { conversations } from './ontologies/conversations.js';
 import { forms } from './ontologies/forms.js';
 import type { OptionalClass, UnknownClass } from './ontology.js';
@@ -71,6 +80,14 @@ import { withDeadline } from './withDeadline.js';
 
 /** How long a connected store waits on its local database before asking the server. */
 const LOCAL_READ_DEADLINE_MS = 1_000;
+/**
+ * The same deadline while a drive sync runs. The sync keeps the local
+ * database's worker busy writing what the server sends, so a read queues
+ * behind those writes for most of the second above, and a device opening a
+ * large drive painted each sidebar item a second late. The server answers in
+ * tens of milliseconds, so it is asked almost at once.
+ */
+const LOCAL_READ_DEADLINE_DURING_SYNC_MS = 150;
 import { BLOB, endpoints, INTERNAL_ID } from './urls.js';
 import { SERVER_MANAGED_PROPS } from './server-managed-props.js';
 import { initOntologies } from './ontologies/index.js';
@@ -78,11 +95,23 @@ import { decodeB64, encodeB64Url } from './base64.js';
 import {
   canonicalizeScheme,
   isAgentSubject,
+  agentPublicKey,
   isAtomicIdentifier,
+  isMangledLegacySubject,
   isBlobSubject,
+  isLensSubject,
+  isPropertySubject,
   commitSubject,
   blobSubject,
 } from './subject.js';
+import { propertyId } from './property-identity.js';
+import {
+  LensIndex,
+  lensId,
+  parseTransform,
+  readTransformValue,
+  verifyLensId,
+} from './lens.js';
 import {
   encodeGenesisCert,
   GENESIS_VERSION_V1,
@@ -106,6 +135,7 @@ import {
   isTerminalCommitError,
   isUnrecoverableCommitError,
   isBenignTerminalCommitError,
+  isMissingParentMessage,
   isNotEnrolledMessage,
   type OutboxEntry,
 } from './local-outbox.js';
@@ -121,6 +151,15 @@ type LoroEphemeralCallback = (update: Uint8Array) => void;
 /** Callback for drive-scoped presence updates */
 type PresenceCallback = (update: Uint8Array) => void;
 type SubjectCallback = (subject: string) => void;
+
+/** The public key an agent subject names, whatever its spelling. */
+function agentKeyOf(subject: string): string {
+  return (agentPublicKey(subject) ?? subject)
+    .replace(/=+$/, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
 /** Callback called when the stores agent changes */
 type AgentCallback = (agent: Agent | undefined) => void;
 type ErrorCallback = (e: Error) => void;
@@ -134,15 +173,47 @@ export interface RepeatedCommitFailure {
   failures: number;
   /** Origin the writes are sent to. */
   server: string;
+  /** Drive the store was on when the write kept failing. */
+  drive?: string;
+  /** Milliseconds since the write first became dirty. */
+  ageMs: number;
+  /** Writes still waiting in the outbox, this one included. */
+  outboxSize: number;
+  /** Whether the websocket to the server was up. */
+  connected: boolean;
+  /** The write creates the resource, so it can fail for its parent. */
+  isGenesis: boolean;
+  /** A finished drive resync already re-armed this write once. */
+  rearmedAfterResync: boolean;
 }
 
 type RepeatedCommitFailureCallback = (failure: RepeatedCommitFailure) => void;
+
+/**
+ * Lets the app deal with a drive the server refuses as "not enrolled" before
+ * the store reports it. `drive` is the drive the refusal names. Resolve `true`
+ * when the drive was handled (for instance switched to browser-only), so
+ * there is nothing left to report. Resolve `false`, or reject, to leave the
+ * report as it is. Called at most once per drive per session.
+ */
+export type RefusedDriveHandler = (
+  drive: string,
+  message: string,
+) => boolean | Promise<boolean>;
 
 type ServerURLCallback = (serverURL: string) => void;
 type DriveCallback = (drive: string) => void;
 
 /** Called when the server reports vector index activity for a drive (via websocket). */
 export type IndexingStatusCallback = (indexing: boolean) => void;
+
+/**
+ * Delivers a signed commit somewhere other than a server: a host app that
+ * holds the real store (the Flutter app's embedded renderer hands it to Rust
+ * over a JS channel). Resolves with the commit as stored, like a server's
+ * answer to `POST /commit`; rejects when the commit was refused.
+ */
+export type CommitTransport = (commit: Commit) => Promise<Commit>;
 
 /** How long a migration fetch may take before the answer stops being useful.
  *  These are servers the device may never reach; sign-in must not wait on
@@ -170,6 +241,25 @@ type CreateResourceOptions = {
   genesisCert?: GenesisCert;
   /** Seed a body or other state before the first save signs its genesis. */
   deferGenesis?: boolean;
+  /**
+   * Create a Property under its content-addressed ID, `atomic:prop:{blake3}`,
+   * derived from `parent`, `propVals[shortname]` and `propVals[datatype]`
+   * (see docs/src/schema/property-identity.md). No genesis cert is minted; the
+   * resource is still signed as a genesis commit. Returns the existing Property
+   * when the store already has it.
+   *
+   * This is an explicit opt-in rather than inferred from `isA`: the ID is
+   * immutable and the three inputs must be known up front, so a caller that
+   * builds a Property draft in steps must not silently get a hashed subject.
+   */
+  contentAddressedProperty?: boolean;
+  /**
+   * Create a Lens under its content-addressed ID, `atomic:lens:{blake3}`,
+   * derived from `propVals[lensFrom]`, `propVals[lensTo]` and
+   * `propVals[lensTransform]` (see docs/src/schema/lenses.md). Returns the
+   * existing Lens when the store already has it.
+   */
+  contentAddressedLens?: boolean;
 };
 
 export interface StoreOpts {
@@ -190,6 +280,17 @@ export interface StoreOpts {
   connect?: boolean;
   /** Native shells have no ClientDb, so a disconnected node cannot save edits. */
   requireOnlineWrites?: boolean;
+  /** Where commits go instead of a server, see {@link Store.setCommitTransport}. */
+  commitTransport?: CommitTransport;
+  /**
+   * There is no server, and never will be: a host app holds the real store
+   * and answers through the client database (the Flutter app's embedded
+   * renderer). Every read comes from that database, nothing is fetched over
+   * HTTP and no auth cookie is made. Without this, a read that "asks the
+   * server" signed a request through the host (which signs only commits) and
+   * failed the resource it was meant to refresh. Implies `connect: false`.
+   */
+  noServer?: boolean;
 }
 
 export interface StoreSyncStatus {
@@ -477,13 +578,15 @@ function isProxyWorthyError(error?: Error): boolean {
 export function isEmbeddedVocabulary(subject: string): boolean {
   return (
     embeddedVocabulary.has(subject) ||
-    subject === 'https://atomicdata.dev/task/v1'
+    subject === 'https://atomicdata.dev/task/v1' ||
+    (sharedVocabularyOntologies as readonly string[]).includes(subject)
   );
 }
 
 const embeddedVocabulary = new Set<string>([
   ...Object.values(taskSchema.properties),
   ...Object.values(taskSchema.tags),
+  ...sharedVocabularyProperties,
   // These classes ship in lib/defaults/plugins.json on every host. Their
   // public atomicdata.dev URLs are not published on the catalog yet.
   server.classes.plugin,
@@ -496,6 +599,9 @@ const embeddedVocabulary = new Set<string>([
   // lib/defaults/notifications.json, likewise not on the catalog yet.
   ...Object.values(notifications.classes),
   ...Object.values(notifications.properties),
+  // lib/defaults/contacts.json, likewise.
+  ...Object.values(contacts.classes),
+  ...Object.values(contacts.properties),
   // lib/defaults/conversations.json, likewise.
   ...Object.values(conversations.classes),
   ...Object.values(conversations.properties),
@@ -583,6 +689,9 @@ async function readDriveVersionVectors(
 
   return all;
 }
+
+/** How long a refused-drive lookup that found nothing is trusted. */
+const REFUSED_DRIVE_RETRY_MS = 30_000;
 
 export class Store {
   /** A list of all functions that need to be called when a certain resource is updated */
@@ -701,6 +810,10 @@ export class Store {
   private clientDbExpected = false;
   /** Callbacks parked in {@link waitForClientDb} until the attach happens. */
   private clientDbWaiters = new Set<() => void>();
+  /** Subjects whose write to the local database waits for the outbox to say
+   *  whether an unsynced offline edit is stored there, see
+   *  {@link writeToClientDb}. */
+  private deferredClientDbWrites = new Set<string>();
   /**
    * Single durable queue replacing the old `dirtyForSync` Set +
    * `atomic.dirtyForSync` + `atomic.offline.<subject>` quartet.
@@ -710,6 +823,7 @@ export class Store {
   public readonly outbox: LocalOutbox = new LocalOutbox(() => {
     this.emitSyncStatus();
     this.scheduleOutboxDrain();
+    this.flushDeferredClientDbWrites();
   });
   private outboxDrainTimer: ReturnType<typeof setTimeout> | undefined;
   /**
@@ -732,7 +846,7 @@ export class Store {
    * land instead of stranding until the next user keystroke.
    */
   private scheduleOutboxDrain(): void {
-    if (!this._serverConnected) return;
+    if (!this.canCommit) return;
     if (this.outbox.size === 0) return;
     if (!this.getAgent()) return;
     // Wake when the soonest entry is due (0 = due now), honoring per-entry
@@ -755,7 +869,7 @@ export class Store {
     if (this.outboxDrainTimer) clearTimeout(this.outboxDrainTimer);
     this.outboxDrainTimer = setTimeout(() => {
       this.outboxDrainTimer = undefined;
-      if (!this._serverConnected) return;
+      if (!this.canCommit) return;
       void this.syncDirtyResources().catch(() => undefined);
     }, delay);
   }
@@ -764,6 +878,12 @@ export class Store {
    * Driven by WebSocket open/close events. When false, commits are stored
    * locally and synced when the connection is restored.
    */
+  /** Pages of unsynced drives' collections the server has answered. Its
+   * members were written to the local DB as they loaded and live updates keep
+   * it current while connected, so the local answer is whole from then on.
+   * Cleared on reconnect, as what happened during a drop never arrived. Lives
+   * here so `collection.ts` needs no runtime import of the store. */
+  readonly collectionPagesAnsweredByServer = new Set<string>();
   private _serverConnected = false;
   private _serverConnectionError: string | undefined;
   private _driveSyncInProgress = false;
@@ -792,6 +912,13 @@ export class Store {
    *  local index populated for THIS drive" once more than one is in play —
    *  see `hasCompletedDriveSyncFor`. */
   private _syncedDrives = new Set<string>();
+  /** The last finished sync of each drive, by normalized subject. A member
+   *  device syncs several drives (its own plus the shared ones); a single
+   *  "last" slot would let any other drive's sync hide this one's. */
+  private _driveSyncs = new Map<
+    string,
+    { drive: string; count: number; timestamp: number }
+  >();
   private _commitLog: CommitLogEntry[] = [];
   /**
    * Commit-log entry id → that commit's `loroUpdate`, kept only while the
@@ -823,16 +950,23 @@ export class Store {
 
   private client: Client;
   public readonly requireOnlineWrites: boolean;
+  private commitTransport: CommitTransport | undefined;
+  /** See {@link StoreOpts.noServer}. */
+  public readonly noServer: boolean;
 
   public constructor(opts: StoreOpts = {}) {
     this.requireOnlineWrites = opts.requireOnlineWrites ?? false;
+    this.commitTransport = opts.commitTransport;
+    this.noServer = opts.noServer ?? false;
     initOntologies();
     this._resources = new Map();
     this.webSockets = new Map();
     this.subscribers = new Map();
 
     if (opts.serverUrl) {
-      this.setServerUrl(opts.serverUrl, { connect: opts.connect ?? true });
+      this.setServerUrl(opts.serverUrl, {
+        connect: !this.noServer && (opts.connect ?? true),
+      });
     }
 
     if (opts.agent) this.setAgent(opts.agent);
@@ -855,14 +989,12 @@ export class Store {
     let storedDrive: string | undefined = undefined;
 
     if (typeof window !== 'undefined') {
-      const raw = localStorage.getItem('drive');
+      try {
+        const raw = localStorage.getItem('drive');
 
-      if (raw) {
-        try {
-          storedDrive = JSON.parse(raw);
-        } catch {
-          // ignore corrupt value
-        }
+        if (raw) storedDrive = JSON.parse(raw);
+      } catch {
+        // ignore corrupt value, or storage that is blocked
       }
     }
 
@@ -902,6 +1034,7 @@ export class Store {
     }
 
     this.client = new Client(this.injectedFetch);
+    this.client.paceListener = ms => this.reportServerPace(ms);
 
     // Rehydrate the commit log from the outbox so the Sync page
     // shows what's queued instead of "No activity recorded" after
@@ -969,8 +1102,10 @@ export class Store {
     const db = this.clientDb;
 
     if (!attached || !db || !isOutboxDatabase(db)) {
-      // Nothing to move into (yet). A later `setClientDb` binds it then.
-      if (!db) this.outbox.databaseUnavailable(agent);
+      // Nothing to move into (yet). A later `setClientDb` binds it then. A
+      // database that cannot hold the queue never will: the localStorage queue
+      // is complete.
+      if (!db || !isOutboxDatabase(db)) this.outbox.databaseUnavailable(agent);
 
       return;
     }
@@ -1087,14 +1222,13 @@ export class Store {
   public registerLocalOnlyDrive(drive: string): void {
     const normalized = this.normalizeSubject(drive);
 
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(
-        'atomic.localOnlyDrives',
-        JSON.stringify([...new Set([...this.localOnlyDrives, normalized])]),
-      );
-    }
-
     this.localOnlyDrives.add(normalized);
+    this.persistLocalOnlyDrives();
+  }
+
+  /** The drive a subject belongs to, for naming it to the person. */
+  public driveOfSubject(subject: string): string {
+    return this.driveOf(this.normalizeSubject(subject));
   }
 
   /**
@@ -1142,7 +1276,7 @@ export class Store {
     const normalized = this.normalizeSubject(drive);
     const agent = this.getAgent();
 
-    if (!agent) throw new Error('Sign in before disconnecting this workspace.');
+    if (!agent) throw new Error('Sign in before disconnecting this drive.');
 
     // The local database attaches a few hundred ms after boot and again after
     // every agent change, so a click inside that window found no database at
@@ -1200,7 +1334,7 @@ export class Store {
 
     if (!ws)
       throw new AtomicError(
-        'Connect to a server before disconnecting this workspace.',
+        'Connect to a server before disconnecting this drive.',
         ErrorType.Server,
       );
 
@@ -1241,11 +1375,22 @@ export class Store {
     // Normalized to match what `registerLocalOnlyDrive` stored.
     if (!this.localOnlyDrives.delete(this.normalizeSubject(drive))) return;
 
-    if (typeof localStorage !== 'undefined') {
+    this.persistLocalOnlyDrives();
+  }
+
+  /** Remember the local-only drives across reloads. Full or blocked storage
+   *  must not break the drive that was just registered, so a failure only
+   *  costs the persistence. */
+  private persistLocalOnlyDrives(): void {
+    if (typeof localStorage === 'undefined') return;
+
+    try {
       localStorage.setItem(
         'atomic.localOnlyDrives',
         JSON.stringify([...this.localOnlyDrives]),
       );
+    } catch (e) {
+      console.warn('[Store] could not persist local-only drives:', e);
     }
   }
 
@@ -1305,7 +1450,7 @@ export class Store {
 
     if (!this._serverConnected) {
       throw new AtomicError(
-        'Connect to a server before syncing this workspace.',
+        'Connect to a server before syncing this drive.',
         ErrorType.Server,
       );
     }
@@ -1343,7 +1488,7 @@ export class Store {
 
     if (!ws || !db) {
       throw new AtomicError(
-        'Connect to a server before syncing this workspace.',
+        'Connect to a server before syncing this drive.',
         ErrorType.Server,
       );
     }
@@ -1352,19 +1497,23 @@ export class Store {
     this.subscribeWebSocket(normalized);
 
     const deadline = Date.now() + timeoutMs;
-    let lastProblem = 'The server has not received this workspace yet.';
+    let lastProblem = 'The server has not received this drive yet.';
 
     while (Date.now() < deadline) {
       await ws.resyncDrive(normalized);
       await db.flush();
 
       try {
+        // A first upload's reconcile can still be sending its root. GET
+        // has a correlated, quiet NotFound response; inventory requires a
+        // readable root and would otherwise be refused and time out.
+        await ws.fetch(drive);
         const remote = await ws.driveInventory(drive, '');
         const local = await db.getVersionVectorsForDrive(drive);
         const remoteBySubject = new Map(remote.map(i => [i.subject, i.vv]));
 
         if (!remoteBySubject.has(drive)) {
-          lastProblem = 'The server is still missing this workspace root.';
+          lastProblem = 'The server is still missing this drive root.';
         } else {
           const missing = Object.entries(local).filter(([subject, vv]) => {
             const have = remoteBySubject.get(subject);
@@ -1389,7 +1538,7 @@ export class Store {
     }
 
     throw new AtomicError(
-      `Cloud Server did not finish receiving this workspace. ${lastProblem}`,
+      `Cloud Server did not finish receiving this drive. ${lastProblem}`,
       ErrorType.Server,
     );
   }
@@ -1544,12 +1693,33 @@ export class Store {
           return isUnrecoverableCommitError(msg, code);
         },
         onRepeatedFailure: (entry, e) => {
-          this.eventManager.emit(StoreEvents.CommitRepeatedlyFailing, {
-            subject: entry.subject,
-            error: e instanceof Error ? e : new Error(String(e)),
-            failures: entry.failures ?? 0,
-            server: this.getServerUrl(),
-          });
+          const error = asError(e);
+          const report = () =>
+            this.eventManager.emit(StoreEvents.CommitRepeatedlyFailing, {
+              subject: entry.subject,
+              error,
+              failures: entry.failures ?? 0,
+              server: this.getServerUrl(),
+              drive: this.getDrive(),
+              ageMs: Math.max(0, Date.now() - entry.enqueuedAt),
+              outboxSize: this.outbox.size,
+              connected: this._serverConnected,
+              isGenesis: entry.signedGenesis !== undefined,
+              rearmedAfterResync: entry.rearmedAfterResync === true,
+            });
+          const refused = this.refusedDriveOf(error.message);
+
+          // A refusal the app resolves (the drive moves to browser-only) is
+          // not a failure worth reporting: nothing keeps failing afterwards.
+          if (refused && this.refusedDriveHandler) {
+            void this.healRefusedDrive(refused, error.message).then(healed => {
+              if (!healed) report();
+            });
+
+            return;
+          }
+
+          report();
         },
         onBlocked: (entry, e) => {
           this.notifyBlockedSync(
@@ -1642,6 +1812,42 @@ export class Store {
       parent !== subject &&
       this.outbox.hasPending(parent)
     );
+  }
+
+  /**
+   * Whether signing `resource` as `agent` would put another agent's name on a
+   * parentless Agent resource. Compared by key, not spelling: the same key
+   * appears as `atomic:agent:`, `did:ad:agent:`, base64url or padded base64.
+   * An Agent resource with a parent (an access key's profile, filed under
+   * its issuer's folder) is rightly written by someone else.
+   */
+  private signsForeignAgentResource(resource: Resource, agent: Agent): boolean {
+    if (!isAgentSubject(resource.subject) || !agent.subject) return false;
+    if (resource.get(core.properties.parent)) return false;
+
+    return agentKeyOf(resource.subject) !== agentKeyOf(agent.subject);
+  }
+
+  /** Subjects of Agent resources with edits waiting for their own agent, by
+   *  agent key. In memory: the resource itself still holds the ops. */
+  private heldForOwner = new Map<string, Set<string>>();
+
+  private holdForOwner(subject: string): void {
+    const key = agentKeyOf(subject);
+    const held = this.heldForOwner.get(key) ?? new Set<string>();
+    held.add(subject);
+    this.heldForOwner.set(key, held);
+  }
+
+  private releaseHeldFor(agent: Agent | undefined): void {
+    const key = agent?.subject ? agentKeyOf(agent.subject) : undefined;
+    const held = key ? this.heldForOwner.get(key) : undefined;
+
+    if (!key || !held) return;
+
+    this.heldForOwner.delete(key);
+
+    for (const subject of held) this.outbox.markDirty(subject);
   }
 
   private outboxTierOf = (entry: OutboxEntry): string => {
@@ -1744,7 +1950,7 @@ export class Store {
         resource.setLastCommitValue(commitId);
         resource.applyToStore('local-acked', { commitId });
         resource.markSynced();
-        await this.maybePushBlobForResource(resource).catch(() => undefined);
+        await this.pushBlobOrNotify(resource);
         // wasNew pipeline — first-time subscribe + save batched children
         this.subscribeWebSocket(subject);
         // The genesis POST IS a save — fire `ResourceSaved` so listeners
@@ -1817,6 +2023,20 @@ export class Store {
 
     const agent = this.getAgent();
     if (!agent) return;
+
+    // An Agent resource is created and written by that agent alone (the
+    // server rejects any other signer). The signer is picked here, at drain
+    // time, so an identity swap between the edit and this point would send
+    // agent A's profile signed as agent B. Hold the edit for its owner
+    // instead: it stays dirty on the resource, is not an error, and is
+    // re-queued when that agent is current again (see `setAgent`).
+    if (this.signsForeignAgentResource(resource, agent)) {
+      this.holdForOwner(resource.subject);
+      this.outbox.clearDirty(subject);
+      this.emitSyncStatus();
+
+      return;
+    }
 
     // Offline-edit recovery: if this subject went dirty while offline, the
     // outbox holds the last-synced version, and the ops past it live ONLY in
@@ -2008,7 +2228,7 @@ export class Store {
     }
 
     this.notifyResourceSaved(resource);
-    await this.maybePushBlobForResource(resource).catch(() => undefined);
+    await this.pushBlobOrNotify(resource);
 
     this.emitSyncStatus();
   };
@@ -2361,6 +2581,33 @@ export class Store {
     return this.resources.get(this.resolveSubject(subject));
   }
 
+  /**
+   * One HTTP GET for a subject whose socket is down. `answered`: the server
+   * replied (with the resource or a real error such as 404/401, which stays on
+   * the resource). `unreachable`: the request failed in transport. `skipped`:
+   * it was cancelled or threw, so nothing is known about the server.
+   */
+  private async fetchOverHttpOnce(
+    subject: string,
+    opts: FetchOpts,
+  ): Promise<'answered' | 'unreachable' | 'skipped'> {
+    try {
+      await this.fetchResourceFromServer(subject, {
+        ...opts,
+        noWebSocket: true,
+      });
+    } catch (e) {
+      return isTransportError(e) ? 'unreachable' : 'skipped';
+    }
+
+    const got = this.getResolved(subject);
+
+    if (!got || got.loading) return 'skipped';
+    if (!got.error) return 'answered';
+
+    return isTransportError(got.error) ? 'unreachable' : 'answered';
+  }
+
   /** Mark a resource as errored + not-loading + notify. No-op if
    *  the subject isn't in the store. */
   private failResource(subject: string, error: Error): void {
@@ -2529,10 +2776,7 @@ export class Store {
         );
 
         if (!this.resources.get(subject)?.get(core.properties.isA)) {
-          this.failResource(
-            subject,
-            error instanceof Error ? error : new Error(String(error)),
-          );
+          this.failResource(subject, asError(error));
         }
       })
       .finally(() => {
@@ -2926,9 +3170,52 @@ export class Store {
     }
   }
 
+  /** Write what {@link writeToClientDb} held back, for every subject the
+   *  outbox has now ruled out or finished with. */
+  private flushDeferredClientDbWrites(): void {
+    // Undefined while the outbox is still being constructed.
+    if (
+      !this.deferredClientDbWrites ||
+      this.deferredClientDbWrites.size === 0
+    ) {
+      return;
+    }
+
+    for (const subject of [...this.deferredClientDbWrites]) {
+      if (this.outbox.mayHavePending(subject)) continue;
+
+      this.deferredClientDbWrites.delete(subject);
+      const resource = this._resources.get(
+        this.aliases.get(subject) ?? subject,
+      );
+
+      if (resource) this.writeToClientDb(resource);
+    }
+  }
+
   /** Persist a resource's current state to the local database, if there is one
    *  and this state is worth writing. */
   private writeToClientDb(resource: Resource): void {
+    // An unsynced offline edit lives ONLY in the local database until the
+    // outbox drain reads it back. A copy that arrived from the server, with
+    // none of that edit in it, would replace it: on a reload the database takes
+    // seconds to open, the server's copy lands first, is queued as a write
+    // behind the open, and the drain then reads the server's state back as if
+    // it were the edit's. Nothing past the synced baseline, so the entry was
+    // cleared and the edit lost. While the outbox cannot yet say (its rows come
+    // from that same database) or holds an entry, a doc with no edit of its
+    // own waits; the write is made once the entry is gone.
+    if (
+      this.outbox.mayHavePending(resource.subject) &&
+      !resource.hasUnsavedChanges()
+    ) {
+      this.deferredClientDbWrites.add(resource.subject);
+
+      return;
+    }
+
+    this.deferredClientDbWrites.delete(resource.subject);
+
     if (
       // Skip persisting when the worker has a known init failure (e.g.
       // OPFS leader-election couldn't steal the lock — Firefox doesn't
@@ -3008,6 +3295,8 @@ export class Store {
     did,
     genesisCert,
     deferGenesis,
+    contentAddressedProperty,
+    contentAddressedLens,
   }: CreateResourceOptions = {}): Promise<Resource<C>> {
     const agentSubject = this.getAgent()?.subject;
     const shouldUseDid =
@@ -3039,7 +3328,53 @@ export class Store {
     let newSubject: string;
     let genesisCertB64: string | undefined;
 
-    if (genesisCert) {
+    if (contentAddressedProperty) {
+      const shortname = propVals?.[core.properties.shortname];
+      const datatype = propVals?.[core.properties.datatype];
+
+      if (
+        noParent ||
+        !parent ||
+        typeof shortname !== 'string' ||
+        typeof datatype !== 'string'
+      ) {
+        throw new Error(
+          'contentAddressedProperty needs parent, shortname and datatype',
+        );
+      }
+
+      newSubject = propertyId(normalizedParent, shortname, datatype);
+
+      // Two devices can mint the same Property. Reuse it instead of failing.
+      const existing = this.resources.get(newSubject);
+
+      if (existing && !existing.new) {
+        return existing as Resource<C>;
+      }
+    } else if (contentAddressedLens) {
+      const from = propVals?.[core.properties.lensFrom];
+      const to = propVals?.[core.properties.lensTo];
+
+      if (
+        noParent ||
+        !parent ||
+        typeof from !== 'string' ||
+        typeof to !== 'string'
+      ) {
+        throw new Error(
+          'contentAddressedLens needs parent, lensFrom, lensTo and lensTransform',
+        );
+      }
+
+      newSubject = lensId(from, to, propVals?.[core.properties.lensTransform]);
+
+      // Two devices can mint the same Lens. Reuse it instead of failing.
+      const existing = this.resources.get(newSubject);
+
+      if (existing && !existing.new) {
+        return existing as Resource<C>;
+      }
+    } else if (genesisCert) {
       const minted = await this.mintFromCert(genesisCert);
       newSubject = subject ?? minted.did;
       genesisCertB64 = minted.certB64;
@@ -3096,7 +3431,13 @@ export class Store {
     // only `save()` does (it moves the stash into the outbox). So a
     // created-but-never-saved resource (e.g. an unfilled `TableNewRow`) is never
     // POSTed. This is the only remaining `signChanges` call site.
-    if (!deferGenesis && ((shouldUseDid && !subject) || genesisCert)) {
+    if (
+      !deferGenesis &&
+      ((shouldUseDid && !subject) ||
+        genesisCert ||
+        contentAddressedProperty ||
+        contentAddressedLens)
+    ) {
       const genesisCommit = await resource.signChanges(this.getAgent()!);
       resource.stashGenesis(genesisCommit);
     }
@@ -3297,6 +3638,17 @@ export class Store {
       : localPointer;
 
     if (!agentResource || !agentResource.isReady()) {
+      return oldPointer && oldPointer !== drive.subject
+        ? oldPointer
+        : undefined;
+    }
+
+    // The fetch above can outlast a sign-in as another identity. The pointer
+    // is only a cache for older clients, so leave it rather than write
+    // agent A's resource while another agent is signed in.
+    const current = this.getAgent()?.subject;
+
+    if (!current || agentKeyOf(current) !== agentKeyOf(agentSubject)) {
       return oldPointer && oldPointer !== drive.subject
         ? oldPointer
         : undefined;
@@ -3517,24 +3869,47 @@ export class Store {
     // Local hits come from the durable KV index in ClientDb (title,
     // description, Loro body, 1-edit prefix fuzzy, PropValSub filters).
     const clientDb = this.clientDb;
-    const kvResults =
+    const offline = !this._serverConnected && !opts.serverOnly;
+    const limit = opts.limit ?? 30;
+
+    // The local OPFS search can take a while on a large drive, so it must not
+    // delay the hosted request: both start now and run concurrently.
+    const localSearch: Promise<string[]> =
       !opts.serverOnly &&
       clientDb?.isReady &&
       typeof clientDb.search === 'function'
-        ? await clientDb.search(query, {
-            limit: opts.limit ?? 30,
-            parents: parentScope,
-            filters: opts.filters,
-          })
-        : [];
+        ? Promise.resolve()
+            .then(() =>
+              clientDb.search(query, {
+                limit,
+                parents: parentScope,
+                filters: opts.filters,
+                includeTrashed: opts.includeTrashed,
+              }),
+            )
+            .then(hits => {
+              if (hits.length > 0) {
+                searchDebug('[search] local kv →', hits.length, hits);
+                opts.onPartial?.(this.withoutDestroyed(hits));
+              }
 
-    if (kvResults.length > 0) {
-      searchDebug('[search] local kv →', kvResults.length, kvResults);
-    }
+              return hits;
+            })
+            .catch(e => {
+              // When the server can still answer, a broken local index must
+              // not take the whole search down.
+              if (offline) throw e;
+
+              searchDebug('[search] local kv failed', e);
+
+              return [] as string[];
+            })
+        : Promise.resolve([]);
 
     // Offline: hosted `/search` is unreachable. Return whatever the local
     // index has (empty if ClientDb is down).
-    if (!this._serverConnected && !opts.serverOnly) {
+    if (offline) {
+      const kvResults = await localSearch;
       searchDebug('[search] OFFLINE kv →', kvResults.length, kvResults);
 
       return this.withoutDestroyed(kvResults);
@@ -3550,15 +3925,21 @@ export class Store {
     // returns new matches. Evict only the in-memory synthetic resource so every
     // retry observes the server's current result set.
     this._resources.delete(this.resolveSubject(searchSubject));
-    const searchResource = await this.fetchResourceFromServer(searchSubject, {
+    const serverSearch = this.fetchResourceFromServer(searchSubject, {
       noWebSocket: true,
     });
+    // Avoid an unhandled rejection if the server fails while we still await
+    // the local search.
+    serverSearch.catch(() => undefined);
+
+    const kvResults = await localSearch;
+    const searchResource = await serverSearch;
     const results = searchResource.get(server.properties.results) ?? [];
     searchDebug('[search] server search returned', results.length);
 
     return this.withoutDestroyed([
       ...new Set([...kvResults, ...results]),
-    ]).slice(0, opts.limit ?? 30);
+    ]).slice(0, limit);
   }
 
   /**
@@ -3607,6 +3988,10 @@ export class Store {
 
     if (r?.isReady() && !r?.new) {
       return true;
+    }
+
+    if (this.noServer) {
+      return !!(await this.fetchResourceFromClientDb(subject))?.isReady();
     }
 
     try {
@@ -4050,11 +4435,21 @@ export class Store {
     // bounded legacy-account lookup during sign-in). Keep OPFS as an offline
     // fallback, but do not make it a prerequisite for contacting the server.
     if (
+      !this.noServer &&
       /^https?:\/\//.test(subject) &&
       new URL(subject).origin !== new URL(this.serverUrl).origin &&
       !isEmbeddedVocabulary(subject) &&
       !this.isLocalOnlySubject(subject)
     ) {
+      // Show the cached copy while the authority answers. Without this a
+      // legacy `https://` drive (every profile, avatar and table on it) came
+      // up as `loading` after each reload even though OPFS held it, because
+      // the only thing that read OPFS was the offline fallback below. Not
+      // awaited: the server read must not wait for the database. Hydration
+      // merges the stored Loro state, so a late local answer cannot undo the
+      // server's.
+      void this.hydrateFromLocalDb(subject).catch(() => undefined);
+
       try {
         const remote = await this.fetchResourceFromServer(subject, opts);
         if (!isTransportError(remote.error)) return;
@@ -4093,7 +4488,7 @@ export class Store {
     let local = this._serverConnected
       ? await withDeadline<boolean | undefined>(
           this.hydrateFromLocalDb(subject),
-          LOCAL_READ_DEADLINE_MS,
+          this.localReadDeadlineMs(),
           undefined,
         )
       : await this.hydrateFromLocalDb(subject);
@@ -4128,13 +4523,18 @@ export class Store {
     // above is authoritative. Without this guard a cache miss would GET
     // the subject from the server (a guaranteed 404 that also leaks
     // local-only subjects onto the wire).
-    if (this.isLocalOnlySubject(subject)) {
+    if (this.noServer || this.isLocalOnlySubject(subject)) {
       await askOnceAttached();
 
       if (!hasLocalData) {
         this.failResource(
           subject,
-          new AtomicError(LOCAL_ONLY_NOT_FOUND_MESSAGE, ErrorType.Transport),
+          this.noServer
+            ? new AtomicError(NOT_IN_HOST_STORE_MESSAGE, ErrorType.NotFound)
+            : new AtomicError(
+                LOCAL_ONLY_NOT_FOUND_MESSAGE,
+                ErrorType.Transport,
+              ),
         );
       }
 
@@ -4185,13 +4585,28 @@ export class Store {
             if (hasLocalData) return;
 
             if (!alreadyResolved) {
-              this.failResource(
-                subject,
-                new AtomicError(
-                  NOT_AVAILABLE_LOCALLY_MESSAGE,
-                  ErrorType.Transport,
-                ),
-              );
+              // The socket is down, the server may not be: ask once over
+              // plain HTTP before giving up. A hard failure of that request
+              // is the only thing that may be reported as "unreachable".
+              // Not when the origin is known to run no node: it would answer
+              // with its index.html, logged as an unparseable resource.
+              const reason =
+                isAtomicIdentifier(subject) &&
+                this.serverUrlWithoutSocket === this.serverUrl
+                  ? 'skipped'
+                  : await this.fetchOverHttpOnce(subject, opts);
+
+              if (reason !== 'answered') {
+                this.failResource(
+                  subject,
+                  new AtomicError(
+                    reason === 'unreachable'
+                      ? NOT_AVAILABLE_SERVER_UNREACHABLE_MESSAGE
+                      : NOT_AVAILABLE_LOCALLY_MESSAGE,
+                    ErrorType.Transport,
+                  ),
+                );
+              }
             }
           }
         }
@@ -4374,12 +4789,16 @@ export class Store {
 
     // A server cannot refresh a browser-only resource. In particular, explicit
     // refresh callers must not turn a valid local drive into a server 404.
-    if (this.isLocalOnlySubject(normalizedSubject)) {
+    // Without a server the client database is the authority: "refresh from
+    // the server" is a read from it.
+    if (this.noServer || this.isLocalOnlySubject(normalizedSubject)) {
       const local = this.resources.get(normalizedSubject);
       if (local?.isReady()) return local as Resource<C>;
       const stored = await this.fetchResourceFromClientDb(normalizedSubject);
       if (stored) return stored as Resource<C>;
-      throw new AtomicError(LOCAL_ONLY_NOT_FOUND_MESSAGE, ErrorType.Transport);
+      throw this.noServer
+        ? new AtomicError(NOT_IN_HOST_STORE_MESSAGE, ErrorType.NotFound)
+        : new AtomicError(LOCAL_ONLY_NOT_FOUND_MESSAGE, ErrorType.Transport);
     }
 
     // In-flight dedup. SideBarDrive and DrivePage both call
@@ -4486,10 +4905,7 @@ export class Store {
         const pending = this.getResolved(subject);
 
         if (pending && !this.hasRenderableContent(pending)) {
-          this.failResource(
-            subject,
-            error instanceof Error ? error : new Error(String(error)),
-          );
+          this.failResource(subject, asError(error));
 
           return pending as Resource<C>;
         }
@@ -4642,6 +5058,8 @@ export class Store {
     }
   }
 
+  private warnedSchemeMismatch = new Set<string>();
+
   /** Opens a Websocket for some subject URL, or returns the existing one. */
   public getWebSocketForSubject(subject: string): WSClient | undefined {
     try {
@@ -4657,7 +5075,34 @@ export class Store {
         origin = new URL(this.serverUrl).origin;
       }
 
-      return this.webSockets.get(origin);
+      const ws = this.webSockets.get(origin);
+
+      if (ws) return ws;
+
+      // The same host under another scheme (`http://` subject, `https://`
+      // server) is this server, not a missing one: a proxy-terminated
+      // deployment whose server still names itself `http://`. Returning
+      // undefined here silently turns off subscriptions and live sync.
+      const serverOrigin = this.serverUrl
+        ? new URL(this.serverUrl).origin
+        : undefined;
+
+      if (
+        serverOrigin &&
+        origin !== serverOrigin &&
+        new URL(origin).host === new URL(serverOrigin).host
+      ) {
+        if (!this.warnedSchemeMismatch.has(origin)) {
+          this.warnedSchemeMismatch.add(origin);
+          console.warn(
+            `Subject origin ${origin} differs from the server URL ${serverOrigin} only by scheme; using the server's WebSocket. Set ATOMIC_SERVER_URL on the server to its public https URL.`,
+          );
+        }
+
+        return this.webSockets.get(serverOrigin) ?? this.getDefaultWebSocket();
+      }
+
+      return undefined;
     } catch (e) {
       throw new Error(
         `Could not open websocket for subject ${subject}: ${e.message}`,
@@ -4691,7 +5136,9 @@ export class Store {
   private async fetchHistoryAttributionFromServer(
     subject: string,
   ): Promise<HistoryAttribution | null> {
-    if (!this.serverUrl) return null;
+    // A drive that stays on this device has no history on the server.
+    if (!this.serverUrl || this.noServer || this.isLocalOnlySubject(subject))
+      return null;
 
     try {
       const url = new URL('/history-attribution', this.serverUrl);
@@ -4791,11 +5238,14 @@ export class Store {
       // here. Answer from what the store already knows instead of fetching:
       // the request can only 404, and the round-trip is what turned a row
       // that should have gone away into a "Resource with error" that stays.
-      if (!isNew && this.isDestroyed(normalized)) {
+      // A mangled legacy subject can never resolve either; asking only toasts a 404.
+      const unresolvable = isMangledLegacySubject(normalized);
+
+      if (!isNew && (unresolvable || this.isDestroyed(normalized))) {
         resource.loading = false;
         resource.setError(
           new AtomicError(
-            `Resource ${normalized} was destroyed`,
+            `Resource ${normalized} ${unresolvable ? 'is not a valid subject' : 'was destroyed'}`,
             ErrorType.NotFound,
           ),
         );
@@ -5129,6 +5579,86 @@ export class Store {
   /** Drives whose "not enrolled" refusal was already reported this session. */
   private _notifiedRefusedDrives = new Set<string>();
 
+  /** Drives whose "server lacks the parent" refusal was already reported. */
+  private _notifiedMissingParentDrives = new Set<string>();
+  /** Resources already reported as refused for lack of rights, once each. */
+  private _notifiedNoRightSubjects = new Set<string>();
+
+  private refusedDriveHandler: RefusedDriveHandler | undefined;
+
+  /** One attempt per drive, so a failing drive is not looked up again by
+   *  every entry that fails for it. A `true` result and an attempt in flight
+   *  stay for the session; a `false` ("could not find out", often because the
+   *  portal session or drive is not ready yet) expires after
+   *  {@link REFUSED_DRIVE_RETRY_MS}, so a later refusal asks again. */
+  private _refusedDriveAttempts = new Map<
+    string,
+    { promise: Promise<boolean>; resolvedFalseAt?: number }
+  >();
+
+  /**
+   * Register how the app resolves a drive the server refuses as "not
+   * enrolled" ({@link RefusedDriveHandler}). Without one, or when it does not
+   * resolve the drive, the person is told as before. Returns a function that
+   * removes the handler.
+   */
+  public setRefusedDriveHandler(
+    handler: RefusedDriveHandler | undefined,
+  ): () => void {
+    this.refusedDriveHandler = handler;
+
+    return () => {
+      if (this.refusedDriveHandler === handler) {
+        this.refusedDriveHandler = undefined;
+      }
+    };
+  }
+
+  /** The drive a "not enrolled" refusal names, if `message` is one. The
+   *  refusal names the drive it refuses; that is the same for every resource
+   *  in it, where a resource's own drive may not be known yet. */
+  private refusedDriveOf(message: string): string | undefined {
+    if (!isNotEnrolledMessage(message)) return undefined;
+
+    return /Drive (\S+) is not enrolled/.exec(message)?.[1];
+  }
+
+  /** Ask the registered handler about a refused drive, once per drive. A
+   *  handler that throws counts as not resolved. */
+  private healRefusedDrive(drive: string, message: string): Promise<boolean> {
+    const key = this.normalizeSubject(drive);
+    const existing = this._refusedDriveAttempts.get(key);
+
+    if (
+      existing &&
+      (existing.resolvedFalseAt === undefined ||
+        Date.now() - existing.resolvedFalseAt < REFUSED_DRIVE_RETRY_MS)
+    ) {
+      return existing.promise;
+    }
+
+    const handler = this.refusedDriveHandler;
+    const entry: { promise: Promise<boolean>; resolvedFalseAt?: number } = {
+      promise: Promise.resolve(false),
+    };
+    entry.promise = (async () => {
+      let healed = false;
+
+      try {
+        healed = !!(await handler?.(drive, message));
+      } catch (e) {
+        console.warn('[Store] refused drive handler failed:', e);
+      }
+
+      if (!healed) entry.resolvedFalseAt = Date.now();
+
+      return healed;
+    })();
+    this._refusedDriveAttempts.set(key, entry);
+
+    return entry.promise;
+  }
+
   /**
    * Tell the person a write stopped syncing. The entry stays queued and
    * visible, and a fresh edit re-arms it.
@@ -5141,22 +5671,100 @@ export class Store {
    */
   private notifyBlockedSync(subject: string, message: string): void {
     if (isNotEnrolledMessage(message)) {
-      // The refusal names the drive it refuses; that is the same for every
-      // resource in it, where a resource's own drive may not be known yet.
+      const named = this.refusedDriveOf(message);
       const drive =
-        /Drive (\S+) is not enrolled/.exec(message)?.[1] ??
-        this.driveOf(this.normalizeSubject(subject)) ??
-        subject;
+        named ?? this.driveOf(this.normalizeSubject(subject)) ?? subject;
 
-      if (this._notifiedRefusedDrives.has(drive)) return;
+      if (this._notifiedRefusedDrives.has(drive)) {
+        // Already reported, but a lookup that found nothing may be retried
+        // (healRefusedDrive decides); a drive it resolves stops refusing.
+        if (named && this.refusedDriveHandler) {
+          void this.healRefusedDrive(named, message).catch(e =>
+            console.warn('[Store] could not retry refused drive:', e),
+          );
+        }
+
+        return;
+      }
 
       this._notifiedRefusedDrives.add(drive);
+
+      const toast = () =>
+        this.notifyError(
+          new Error(
+            `This server does not host this drive (${message.trim()}) ` +
+              `Your changes are kept on this device and are not being sent. ` +
+              `Ask the server's operator to enrol the drive, or turn on ` +
+              `browser-only sync for it in the sync settings.`,
+          ),
+        );
+
+      // The app may resolve the drive first (it moves to browser-only); only
+      // a drive it leaves alone is reported.
+      if (named && this.refusedDriveHandler) {
+        void this.healRefusedDrive(named, message)
+          .then(healed => {
+            if (!healed) toast();
+          })
+          .catch(e => console.warn('[Store] could not report refusal:', e));
+
+        return;
+      }
+
+      toast();
+
+      return;
+    }
+
+    if (isMissingParentMessage(message)) {
+      // Every write under a workspace the server does not hold is refused the
+      // same way, and each one used to toast on every page load. Say it once
+      // per workspace, in terms of the workspace, and say what to do.
+      const drive = this.driveOf(this.normalizeSubject(subject)) ?? subject;
+
+      if (this._notifiedMissingParentDrives.has(drive)) return;
+
+      this._notifiedMissingParentDrives.add(drive);
       this.notifyError(
         new Error(
-          `This server does not host this workspace (${message.trim()}) ` +
-            `Your changes are kept on this device and are not being sent. ` +
-            `Ask the server's operator to enrol the workspace, or turn on ` +
-            `browser-only sync for it in the sync settings.`,
+          `Some changes could not be sent: the server does not have the ` +
+            `drive they belong to (${drive.slice(0, 40)}…). They are ` +
+            `kept on this device and are not being retried. Once the drive ` +
+            `is back on the server, syncing it sends them; if it is gone, ` +
+            `discard them on the Sync page.`,
+        ),
+      );
+
+      return;
+    }
+
+    const missingRight = /\/properties\/(\w+) right has been found/.exec(
+      message,
+    )?.[1];
+
+    if (missingRight) {
+      // Say what happened in the person's terms: which item, what they may
+      // not do, that their work is safe, and what resolves it.
+      if (this._notifiedNoRightSubjects.has(subject)) return;
+
+      this._notifiedNoRightSubjects.add(subject);
+
+      const local = this.resources.get(this.normalizeSubject(subject));
+      const title =
+        local && local.title !== local.subject ? local.title : undefined;
+      const what = title ? `"${title}"` : 'a change';
+      const action =
+        missingRight === 'append'
+          ? 'add this here'
+          : missingRight === 'read'
+            ? 'view this'
+            : 'edit this';
+
+      this.notifyError(
+        new Error(
+          `You are not allowed to ${action}, so ${what} was not synced. ` +
+            `It is kept on this device. Ask the owner of the drive for ` +
+            `access, or move it somewhere you can edit.`,
         ),
       );
 
@@ -5174,8 +5782,8 @@ export class Store {
   /**
    * This is called when Errors occur in some of the library functions.
    */
-  public notifyError(e: Error | string): void {
-    const error = e instanceof Error ? e : new Error(e);
+  public notifyError(e: unknown): void {
+    const error = asError(e);
 
     if (this.eventManager.hasSubscriptions(StoreEvents.Error)) {
       this.eventManager.emit(StoreEvents.Error, error);
@@ -5184,12 +5792,52 @@ export class Store {
     }
   }
 
+  /** Like {@link notifyError}, but only the first time for this key. */
+  public notifyErrorOnce(key: string, e: unknown): void {
+    if (this._notifiedErrorKeys.has(key)) return;
+
+    this._notifiedErrorKeys.add(key);
+    this.notifyError(e);
+  }
+
+  /** Lets {@link notifyErrorOnce} report this key again. */
+  public clearNotifiedError(key: string): void {
+    this._notifiedErrorKeys.delete(key);
+  }
+
+  private _notifiedErrorKeys = new Set<string>();
+
   /**
    * Whether the Store has an active WebSocket connection to the server.
    * Use this to decide whether to attempt server operations or store locally.
    */
   public get serverConnected(): boolean {
     return this._serverConnected;
+  }
+
+  /**
+   * Whether a signed commit can be delivered right now: to the server, or to
+   * the {@link setCommitTransport commit transport}. The WRITE side asks
+   * this (save, destroy, the outbox drain); reads and live subscriptions keep
+   * asking {@link serverConnected}, so a transport never makes the store
+   * fetch from a server it does not have.
+   */
+  public get canCommit(): boolean {
+    return this._serverConnected || this.commitTransport !== undefined;
+  }
+
+  /**
+   * Send every commit to `transport` instead of a server. For a page whose
+   * store lives in a host app: the page runs `connect: false`, so without a
+   * transport its edits would only ever reach the offline path (snapshot and
+   * outbox rows in the local database), which such a host does not keep.
+   * With one, saving works as when online: the outbox drains, each commit is
+   * signed here and handed over, and `save()` resolves once the host has it.
+   */
+  public setCommitTransport(transport: CommitTransport | undefined): void {
+    this.commitTransport = transport;
+    this.emitSyncStatus();
+    this.scheduleOutboxDrain();
   }
 
   /** Called by WebSocket client when connection state changes. */
@@ -5205,6 +5853,10 @@ export class Store {
 
     this._serverConnected = connected;
     this._serverConnectionError = nextError;
+
+    if (connected) {
+      this.collectionPagesAnsweredByServer.clear();
+    }
 
     if (!connected) {
       this._driveSyncInProgress = false;
@@ -5289,7 +5941,7 @@ export class Store {
 
         if (r) {
           r.loading = false;
-          r.setError(e instanceof Error ? e : new Error(String(e)));
+          r.setError(asError(e));
           this.notify(r);
         }
       });
@@ -5298,7 +5950,7 @@ export class Store {
 
   private saveStatus = new SaveStatusCoordinator({
     getOutboxEntry: subject => this.outbox.getEntry(subject),
-    isConnected: () => this._serverConnected,
+    isConnected: () => this.canCommit,
     changePending: delta => {
       this._scheduledSaves += delta;
       this.emitSyncStatus();
@@ -5316,6 +5968,15 @@ export class Store {
     } = {},
   ): ScheduledSave {
     return this.saveStatus.createScheduler(resource, options);
+  }
+
+  /**
+   * Run every save a UI debounce timer is holding (`createSaveScheduler`,
+   * `useValue`'s commit debounce) now instead of when its timer fires, and
+   * wait for them. For a page about to go away: its timers would die with it.
+   */
+  public flushScheduledSaves(): Promise<void> {
+    return this.saveStatus.flushAll();
   }
 
   /** Read status is separate: a queued offline edit can still be fully readable. */
@@ -5365,10 +6026,28 @@ export class Store {
 
     if (drive) {
       this._syncedDrives.add(drive);
+      this._driveSyncs.set(this.normalizeSubject(drive), {
+        drive,
+        count,
+        timestamp,
+      });
 
       if (this._lastDriveSyncError?.drive === drive) {
         this._lastDriveSyncError = undefined;
       }
+
+      // Writes the server refused for a missing parent (a drive root it never
+      // received) were parked after their retries. This resync is what offers
+      // that parent, so try them once more.
+      const syncedDrive = this.normalizeSubject(drive);
+      const rearmed = this.outbox.rearmParentBlocked(
+        subject =>
+          this.normalizeSubject(
+            this.driveOf(this.normalizeSubject(subject)),
+          ) === syncedDrive,
+      );
+
+      if (rearmed > 0) this.scheduleOutboxDrain();
     }
 
     this.emitSyncStatus();
@@ -5393,6 +6072,14 @@ export class Store {
     }
 
     this.emitSyncStatus();
+  }
+
+  /** How long a read waits for the local database before asking the
+   *  connected server instead. */
+  public localReadDeadlineMs(): number {
+    return this._driveSyncInProgress
+      ? LOCAL_READ_DEADLINE_DURING_SYNC_MS
+      : LOCAL_READ_DEADLINE_MS;
   }
 
   /** True once a drive sync has finished FOR THIS DRIVE in this session.
@@ -5424,10 +6111,35 @@ export class Store {
     this._driveSyncPulling = true;
   }
 
+  /** The finished sync of the open drive when there is one, else the most
+   *  recent finished sync of any drive. */
+  private currentDriveSyncRecord() {
+    const own = this.drive
+      ? this._driveSyncs.get(this.normalizeSubject(this.drive))
+      : undefined;
+
+    return own ? { ...own, drive: this.drive! } : this._lastDriveSync;
+  }
+
   public hasCompletedDriveSyncFor(drive: string | undefined): boolean {
     if (!drive) return false;
 
     return this._syncedDrives.has(drive);
+  }
+
+  /**
+   * Calls `callback` once, when a sync of `drive` finishes. Returns a function
+   * that cancels the wait. Does not fire for a sync that has already finished.
+   */
+  public onceDriveSynced(drive: string, callback: () => void): () => void {
+    const off = this.on(StoreEvents.SyncStatusChanged, () => {
+      if (!this.hasCompletedDriveSyncFor(drive)) return;
+
+      off();
+      callback();
+    });
+
+    return off;
   }
 
   public getSyncStatus(): StoreSyncStatus {
@@ -5465,9 +6177,44 @@ export class Store {
       clientDbReady: this.clientDb?.isReady ?? false,
       clientDbAttached: !!this.clientDb,
       clientDbError: this.clientDb?.initError?.message,
-      lastDriveSync: this._lastDriveSync,
+      lastDriveSync: this.currentDriveSyncRecord(),
       lastDriveSyncError: this._lastDriveSyncError,
     };
+  }
+
+  /** The drive's Trash folder if the store already knows it. Never fetches. */
+  public peekTrashFolder(drive: string | undefined): string | undefined {
+    return trashOps.peekTrashFolder(this, drive);
+  }
+
+  /** The drive's Trash folder, created on first use. */
+  public getOrCreateTrashFolder(drive: string): Promise<string> {
+    return trashOps.getOrCreateTrashFolder(this, drive);
+  }
+
+  /**
+   * Parks a resource in the drive's Trash and remembers its old parent.
+   * Throws for content-addressed properties; false when nothing was done.
+   */
+  public trash(subject: string, drive: string): Promise<boolean> {
+    return trashOps.moveToTrash(this, subject, drive);
+  }
+
+  /** Moves a trashed resource back to where it came from (or the drive root). */
+  public restore(subject: string, drive: string): Promise<void> {
+    return trashOps.restoreFromTrash(this, subject, drive);
+  }
+
+  /**
+   * Whether a resource is in the drive's Trash: directly, or with `deep` also
+   * under a trashed ancestor (only already-loaded ancestors are read).
+   */
+  public isTrashed(
+    subjectOrResource: string | Resource,
+    drive: string | undefined,
+    opts?: trashOps.IsTrashedOptions,
+  ): boolean {
+    return trashOps.isTrashed(this, subjectOrResource, drive, opts);
   }
 
   public async notifyResourceSaved(resource: Resource): Promise<void> {
@@ -5624,6 +6371,14 @@ export class Store {
     // the subject as destroyed and drops it from the answer.
     this.markDestroyed(resolved);
 
+    if (isLensSubject(resolved)) {
+      const lens = this.lenses.get(resolved);
+
+      this.lenses.remove(resolved);
+
+      if (lens) this.rematerializeLensed(lens.from, lens.to);
+    }
+
     // Tombstone in ClientDb (OPFS) so the resource doesn't reappear after a
     // page reload. The in-memory `resources` map is wiped on reload, but the
     // WASM DB persists; without this, cascade-deleted children survive
@@ -5703,11 +6458,12 @@ export class Store {
     // identity never drains a previous agent's commits (whose `did:ad:<sig>`
     // subjects can't be re-signed by anyone else — they'd 401 forever).
     this.outbox.rebind(agent?.subject);
+    this.releaseHeldFor(agent);
     // Drain the now-loaded queue for this agent (no-ops if empty/offline).
     this.scheduleOutboxDrain();
 
     if (agent && agent.subject) {
-      if (hasBrowserAPI()) {
+      if (hasBrowserAPI() && !this.noServer) {
         // Fire-and-forget here: this is a side effect on agent change,
         // not a precondition of a specific request. The HTTP request
         // path (`Client.fetchResourceHTTP`) re-installs the cookie if
@@ -5727,7 +6483,7 @@ export class Store {
       // it.
       void this.adoptLegacyAgentIdentity(agent);
     } else {
-      if (hasBrowserAPI()) {
+      if (hasBrowserAPI() && !this.noServer) {
         removeCookieAuthentication();
       }
     }
@@ -5972,10 +6728,7 @@ export class Store {
   ): boolean {
     if (isAtomicIdentifier(subject)) return true;
 
-    // The migration's mangled spelling. It survives serialization as a path
-    // segment containing a colon, which is not a subject this server can
-    // resolve — it is the `staging` subdomain welded onto the path.
-    if (/\/[^/]+:\//.test(subject.replace(/^https?:\/\//, ''))) return false;
+    if (isMangledLegacySubject(subject)) return false;
 
     try {
       const { origin } = new URL(subject);
@@ -6076,9 +6829,15 @@ export class Store {
     }
 
     if (supportsWebSockets()) {
-      const userDisconnected =
-        typeof localStorage !== 'undefined' &&
-        localStorage.getItem('ws-disconnected') === '1';
+      let userDisconnected = false;
+
+      try {
+        userDisconnected =
+          typeof localStorage !== 'undefined' &&
+          localStorage.getItem('ws-disconnected') === '1';
+      } catch {
+        // Blocked storage: treat the person as connected.
+      }
 
       if (!userDisconnected && url !== this.serverUrlWithoutSocket) {
         this.openWebSocket(url);
@@ -6117,7 +6876,14 @@ export class Store {
     }
 
     if (typeof window !== 'undefined') {
-      localStorage.setItem('drive', JSON.stringify(drive));
+      try {
+        localStorage.setItem('drive', JSON.stringify(drive));
+      } catch (e) {
+        // A full or blocked storage (QuotaExceededError, SecurityError) only
+        // costs the person this drive being remembered after a reload; it must
+        // not unwind the effect that selected it.
+        console.warn('[Store] could not persist the current drive:', e);
+      }
     }
 
     this.eventManager.emit(StoreEvents.DriveChanged, drive);
@@ -6208,7 +6974,11 @@ export class Store {
     }
 
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('ws-disconnected', '1');
+      try {
+        localStorage.setItem('ws-disconnected', '1');
+      } catch (e) {
+        console.warn('[Store] could not persist the disconnected state:', e);
+      }
     }
   }
 
@@ -6948,12 +7718,28 @@ export class Store {
     // here meant tests/embedders overriding the store's fetch couldn't
     // observe or intercept blob pushes at all.
     const fetchImpl = this.injectedFetch ?? fetch;
-    await fetchImpl(url, {
+    const response = await fetchImpl(url, {
       method: 'PUT',
       // Cast: TS lib.dom marks Uint8Array<SharedArrayBuffer> incompatible with
       // BodyInit/BlobPart; at runtime our bytes are ArrayBuffer-backed.
       body: bytes as unknown as BodyInit,
       headers: { 'Content-Type': 'application/octet-stream' },
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Uploading the file to the server failed (HTTP ${response.status}). ` +
+          `It stays on this device.`,
+      );
+    }
+  }
+
+  /** Push a resource's blob; a failure is shown once per resource, not per retry. */
+  private pushBlobOrNotify(resource: Resource): Promise<void> {
+    return this.maybePushBlobForResource(resource).catch(e => {
+      console.warn('[Store] blob push failed', resource.subject, e);
+
+      this.notifyErrorOnce(`blob:${resource.subject}`, e);
     });
   }
 
@@ -6967,6 +7753,7 @@ export class Store {
   public async uploadFiles(
     files: FileOrFileLike[],
     parent: string,
+    opts: { optimistic?: boolean } = {},
   ): Promise<string[]> {
     const agent = this.getAgent();
 
@@ -7071,7 +7858,14 @@ export class Store {
         resource.stashGenesis(genesis);
       }
 
-      await resource.save();
+      if (opts.optimistic) {
+        // The bytes are local, so the caller can show the file now. A failed
+        // sync is toasted, never swallowed.
+        void resource.save().catch(e => this.notifyError(e));
+      } else {
+        await resource.save();
+      }
+
       // The blob bytes are pushed to the server from the outbox drain
       // (via `Store.maybePushBlobForResource`) — that path covers both the
       // online-save case here AND the offline → reconnect retry path, where
@@ -7084,6 +7878,16 @@ export class Store {
     return createdSubjects;
   }
 
+  /**
+   * @Internal
+   * The server's write-load hint (`pace_ms` of a `COMMIT_OK`, or the
+   * `X-Atomic-Pace-Ms` header): the outbox spaces the commits of one
+   * resource at least that far apart, so each carries more edits.
+   */
+  public reportServerPace(paceMs: number): void {
+    this.outbox.setServerPace(paceMs);
+  }
+
   /** Posts a Commit to some endpoint. Returns the Commit created by the server. */
   public async postCommit(commit: Commit, endpoint: string): Promise<Commit> {
     const close = perfSpan('store.postCommit', {
@@ -7092,6 +7896,7 @@ export class Store {
 
     try {
       const created = await this.sendCommit(commit, endpoint);
+      this.outbox.noteCommitted(commit.subject);
       close('ok');
       this.pushCommitLog(
         this.buildCommitLogEntry(commit, 'outgoing', 'sent', {
@@ -7126,6 +7931,8 @@ export class Store {
    * commits still work; they just always reach every subscriber.
    */
   private async sendCommit(commit: Commit, endpoint: string): Promise<Commit> {
+    if (this.commitTransport) return this.commitTransport(commit);
+
     const ws = this.getWebSocketForEndpoint(endpoint);
 
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -7142,6 +7949,12 @@ export class Store {
           isUnrecoverableCommitError(message, code) ||
           isTerminalCommitError(message, code)
         ) {
+          throw e;
+        }
+
+        // "Busy, come back later" is an answer too. HTTP would hit the same
+        // overloaded node, so the outbox waits instead.
+        if (e instanceof AtomicError && e.retryAfterMs !== undefined) {
           throw e;
         }
 
@@ -7547,6 +8360,86 @@ export class Store {
     }
   }
 
+  /**
+   * The lenses this store knows, by the properties they touch. Resources
+   * derive values through them when their Loro doc is materialized (see
+   * `lens.ts`). Filled as Lens resources load; `loadLenses` brings in a
+   * drive's lenses.
+   */
+  public readonly lenses = new LensIndex();
+
+  /**
+   * Make a loaded Lens active and re-materialize the loaded resources that
+   * hold one of its properties.
+   *
+   * It applies only when its ID matches its content and its `parent` is the
+   * parent of the property it writes (`lensTo`): a lens never applies across an
+   * ontology it does not own. Anything wrong just means the lens is not
+   * applied; it never fails a load.
+   */
+  public async activateLens(resource: Resource): Promise<void> {
+    try {
+      const from = resource.get(core.properties.lensFrom);
+      const to = resource.get(core.properties.lensTo);
+      const parent = resource.get(core.properties.parent);
+      const transform = readTransformValue(
+        resource.get(core.properties.lensTransform),
+      );
+
+      if (
+        typeof from !== 'string' ||
+        typeof to !== 'string' ||
+        typeof parent !== 'string' ||
+        !verifyLensId(resource.subject, from, to, transform)
+      ) {
+        return;
+      }
+
+      const canonical = canonicalizeScheme(resource.subject);
+      const existing = this.lenses.get(canonical);
+
+      if (existing) return;
+
+      // `lensTo` must be known to read its parent. Only content-addressed
+      // properties are fetched: a lens must not make the store fetch any URL.
+      const target = isPropertySubject(to)
+        ? await this.getResource(to)
+        : this.resources.get(canonicalizeScheme(to));
+      const targetParent = target?.get(core.properties.parent);
+
+      if (
+        typeof targetParent !== 'string' ||
+        canonicalizeScheme(targetParent) !== canonicalizeScheme(parent)
+      ) {
+        return;
+      }
+
+      this.lenses.insert({
+        id: canonical,
+        from: canonicalizeScheme(from),
+        to: canonicalizeScheme(to),
+        transform: parseTransform(transform),
+        parent: canonicalizeScheme(parent),
+      });
+
+      this.rematerializeLensed(
+        canonicalizeScheme(from),
+        canonicalizeScheme(to),
+      );
+    } catch {
+      // An inactive lens derives nothing; reading is unaffected.
+    }
+  }
+
+  /** Re-derive the loaded resources that hold one of these properties. */
+  private rematerializeLensed(...props: string[]): void {
+    for (const resource of this.resources.values()) {
+      if (resource.refreshDerivedValues(props)) {
+        void this.notify(resource);
+      }
+    }
+  }
+
   /** Lets subscribers know that a resource has been changed. */
   private async notify(resource: Resource): Promise<void> {
     // A React snapshot read may initialize a missing resource. Other mounted
@@ -7563,6 +8456,10 @@ export class Store {
     // all `Object.is` needs.
     const key = this.normalizeSubject(resource.subject);
     this.snapshots.set(key, captureResourceSnapshot(resource));
+
+    if (isLensSubject(key)) {
+      void this.activateLens(resource);
+    }
 
     this.eventManager.emit(StoreEvents.ResourceUpdated, resource);
 

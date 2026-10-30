@@ -75,6 +75,9 @@ export async function fetchManagedInfo(
   try {
     const res = await fetch(new URL('/server', serverUrl).toString(), {
       headers: { Accept: 'application/ad+json' },
+      // Cookies are shared across localhost ports. This public request can
+      // ask a different node from the one the active auth cookie signs for.
+      credentials: 'omit',
     });
 
     if (!res.ok) return DEFAULT;
@@ -318,11 +321,30 @@ export async function forgetServerPeer(
   }
 }
 
+/** A non-empty, trimmed name, or undefined. */
+export function readManagedBy(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const name = value.trim();
+
+  return name.length > 0 ? name : undefined;
+}
+
 export type NodeDriveUsage = {
   driveName: string | null;
   resourceCount: number;
   blobBytes: number;
   loroBytes: number;
+  /**
+   * Whether the node currently admits this drive (enrolled and active). Absent
+   * on a node that predates the field, which callers must read as "unknown",
+   * not as false.
+   */
+  enrolled?: boolean;
+  /**
+   * The name the paying account chose to show members. Only set when the node
+   * sent a non-empty string; absent on self-hosted nodes.
+   */
+  managedBy?: string;
 };
 
 /**
@@ -362,6 +384,8 @@ export async function fetchNodeDriveUsage(
       resourceCount: Number(data?.resourceCount ?? 0),
       blobBytes: Number(data?.blobBytes ?? 0),
       loroBytes: Number(data?.loroBytes ?? 0),
+      enrolled: typeof data?.enrolled === 'boolean' ? data.enrolled : undefined,
+      managedBy: readManagedBy(data?.managedBy),
     };
   } catch {
     return null;

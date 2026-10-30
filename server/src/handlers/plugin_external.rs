@@ -24,12 +24,14 @@ pub struct Approval {
 
 pub async fn apply(
     appstate: web::Data<AppState>,
-    body: web::Json<Approval>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
+    let body: Approval = crate::helpers::parse_json(&raw)?;
     let account =
-        super::plugin_schedule::authorize(&appstate, &req, &context, &body.plugin).await?;
+        crate::helpers::authorize_plugin_write(&appstate, &req, &context, &raw, &body.plugin)
+            .await?;
     let release = appstate.store.get_plugin_release(&body.release)?;
     let manifest = Manifest::parse(release.manifest)?.ok_or_else(|| {
         AtomicServerError::bad_request("Remote writes require a versioned release")
@@ -46,14 +48,14 @@ pub async fn apply(
             "The release does not declare this write operation",
         ));
     }
-    let mut host = StoreHost {
-        db: std::sync::Arc::new(appstate.store.clone()),
-        plugin: body.plugin.clone(),
-        drive: body.drive.clone(),
-        for_agent: account,
-        manifest: Some(manifest),
-    };
-    host.validate_binding().await?;
+    let mut host = StoreHost::bound(
+        &appstate.store,
+        &body.drive,
+        &body.plugin,
+        account,
+        Some(manifest),
+    )
+    .await?;
     let connection = serde_json::json!([body.drive, body.plugin]).to_string();
     let receipt = external::execute(
         &appstate.store,
@@ -81,28 +83,31 @@ async fn authorize_operation(
     appstate: &AppState,
     req: &actix_web::HttpRequest,
     context: &RequestContext,
+    raw: &[u8],
     operation: &Operation,
 ) -> AtomicServerResult<String> {
     let account =
-        super::plugin_schedule::authorize(appstate, req, context, &operation.plugin).await?;
-    let host = StoreHost {
-        db: std::sync::Arc::new(appstate.store.clone()),
-        plugin: operation.plugin.clone(),
-        drive: operation.drive.clone(),
-        for_agent: account.clone(),
-        manifest: None,
-    };
-    host.validate_binding().await?;
+        crate::helpers::authorize_plugin_write(appstate, req, context, raw, &operation.plugin)
+            .await?;
+    StoreHost::bound(
+        &appstate.store,
+        &operation.drive,
+        &operation.plugin,
+        account.clone(),
+        None,
+    )
+    .await?;
     Ok(account.to_string())
 }
 
 pub async fn status(
     appstate: web::Data<AppState>,
-    body: web::Json<Operation>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
-    authorize_operation(&appstate, &req, &context, &body).await?;
+    let body: Operation = crate::helpers::parse_json(&raw)?;
+    authorize_operation(&appstate, &req, &context, &raw, &body).await?;
     let connection = serde_json::json!([body.drive, body.plugin]).to_string();
     let entry = external::inspect(
         &appstate.store,
@@ -124,11 +129,12 @@ pub struct Confirm {
 
 pub async fn confirm(
     appstate: web::Data<AppState>,
-    body: web::Json<Confirm>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
-    let actor = authorize_operation(&appstate, &req, &context, &body.operation).await?;
+    let body: Confirm = crate::helpers::parse_json(&raw)?;
+    let actor = authorize_operation(&appstate, &req, &context, &raw, &body.operation).await?;
     let op = &body.operation;
     let connection = serde_json::json!([op.drive, op.plugin]).to_string();
     external::confirm_applied(
@@ -151,23 +157,25 @@ pub async fn confirm(
 /// Read-only broker for host-driven adapters using the same release capabilities.
 pub async fn read(
     appstate: web::Data<AppState>,
-    body: web::Json<Approval>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
+    let body: Approval = crate::helpers::parse_json(&raw)?;
     let account =
-        super::plugin_schedule::authorize(&appstate, &req, &context, &body.plugin).await?;
+        crate::helpers::authorize_plugin_write(&appstate, &req, &context, &raw, &body.plugin)
+            .await?;
     let release = appstate.store.get_plugin_release(&body.release)?;
     let manifest = Manifest::parse(release.manifest)?
         .ok_or_else(|| AtomicServerError::bad_request("Versioned release required"))?;
-    let mut host = StoreHost {
-        db: std::sync::Arc::new(appstate.store.clone()),
-        plugin: body.plugin.clone(),
-        drive: body.drive.clone(),
-        for_agent: account,
-        manifest: Some(manifest),
-    };
-    host.validate_binding().await?;
+    let mut host = StoreHost::bound(
+        &appstate.store,
+        &body.drive,
+        &body.plugin,
+        account,
+        Some(manifest),
+    )
+    .await?;
     let response = host
         .request(
             serde_json::to_string(&body.intent)

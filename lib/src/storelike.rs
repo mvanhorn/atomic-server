@@ -142,39 +142,6 @@ impl ResourceResponse {
             }
         }
     }
-
-    /// Takes a vector of resources and returns a ResourceResponse::ResourceWithReferenced
-    /// If the main subject is not found it will Error
-    pub fn from_vec(main_subject: &str, vec: Vec<Resource>) -> AtomicResult<Self> {
-        if vec.is_empty() {
-            return Err("No resources found".into());
-        }
-        if vec.len() == 1 {
-            return Ok(ResourceResponse::Resource(vec[0].clone()));
-        }
-
-        let mut resource: Option<Resource> = None;
-        let mut referenced = Vec::new();
-
-        for r in vec {
-            if r.get_subject().as_str() == main_subject {
-                resource = Some(r);
-            } else {
-                referenced.push(r);
-            }
-        }
-
-        let Some(resource) = resource else {
-            return Err(AtomicError::not_found(format!(
-                "Resource with subject {} not found",
-                main_subject
-            )));
-        };
-
-        Ok(ResourceResponse::ResourceWithReferenced(
-            resource, referenced,
-        ))
-    }
 }
 
 pub type ResourceCollection = Vec<Resource>;
@@ -459,6 +426,12 @@ pub trait Storelike: Sized + Send + Sync {
     /// URLs and make an empty store look seeded.
     fn has_stored_resource(&self, _subject: &Subject) -> bool {
         false
+    }
+
+    /// The active lenses (see [`crate::lens`]), or `None` when there are none.
+    /// Stores that do not keep a lens index return `None`: no value is derived.
+    fn lens_index(&self) -> Option<std::sync::Arc<crate::lens::LensIndex>> {
+        None
     }
 
     /// The fingerprint of the built-in defaults (`lib/defaults/*.json` + base
@@ -803,6 +776,15 @@ pub struct Query {
     /// they're a separate field rather than folded into `filters`: nothing else
     /// should silently lose its index.
     pub expression_filters: Vec<crate::expression::ExpressionFilter>,
+    /// Leave out members that sit in their drive's Trash folder (directly or
+    /// through an ancestor, see [crate::trash]). Off by default, so internal
+    /// queries see everything; collections turn it on unless asked otherwise.
+    /// A query that lists the children of the Trash folder itself (a `parent`
+    /// filter) is the Trash view and is never filtered.
+    ///
+    /// Costs one shallow read per member of the returned page; trashed members
+    /// do not count towards `count`, like members the agent cannot read.
+    pub exclude_trashed: bool,
 }
 
 impl Query {
@@ -823,6 +805,7 @@ impl Query {
             for_agent: ForAgent::Sudo,
             drive: None,
             aggregation: None,
+            exclude_trashed: false,
         }
     }
 

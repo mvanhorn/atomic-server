@@ -88,7 +88,7 @@ describe('collection page assemble does not flash unsorted members', () => {
         value: TABLE,
         expression_filters: [
           {
-            expression: { kind: 'difference', from: 0, to: 10 },
+            expression: { kind: 'formula', formula: '10 - 0', vars: {} },
             operator: 'gte',
             value: 100,
           },
@@ -163,6 +163,51 @@ describe('collection page assemble does not flash unsorted members', () => {
     for (const snap of snapshots) {
       expect(snap).toEqual(sorted.slice(0, snap.length));
     }
+  });
+
+  it('reads a bounded number of sort keys while a big list arrives', async ({
+    expect,
+  }) => {
+    const store = new Store({ serverUrl: 'https://example.com' });
+    const collection = new Collection(
+      store,
+      'https://example.com',
+      {
+        page_size: '1000',
+        include_nested: false,
+        property: core.properties.parent,
+        value: TABLE,
+        sort_by: dataBrowser.properties.sortOrder,
+        sort_desc: false,
+      },
+      true,
+    );
+    const reads = vi.spyOn(Resource.prototype, 'get');
+    const n = 300;
+
+    for (let i = 0; i < n; i++) {
+      const subject = `https://example.com/row-${i}`;
+      const row = new Resource(subject);
+      row.applyHydratedValues([
+        [core.properties.parent, TABLE],
+        [core.properties.isA, [dataBrowser.classes.folder]],
+        [commits.properties.createdAt, 1000 + i],
+        [dataBrowser.properties.sortOrder, i],
+      ]);
+      row.loading = false;
+      store.addResource(row);
+      collection.applyResourceChange(subject, row);
+    }
+
+    const sortReads = reads.mock.calls.filter(
+      ([prop]) => prop === dataBrowser.properties.sortOrder,
+    ).length;
+
+    reads.mockRestore();
+
+    expect(pageMembers(collection)).toHaveLength(n);
+    // Each arrival compares against the last member, not the whole list.
+    expect(sortReads).toBeLessThan(n * 6);
   });
 
   it('files a late-arriving member in its sortOrder place, not at the end', async ({
@@ -276,6 +321,108 @@ describe('collection page assemble does not flash unsorted members', () => {
     expect(members).toContain(created);
   });
 
+  it('keeps the members it had when a member changes while a refresh is in flight', async ({
+    expect,
+  }) => {
+    const store = new Store({ serverUrl: 'https://example.com' });
+    store.setDrive(DRIVE);
+    store.finishDriveSync(DRIVE, 2, Date.now());
+    const answer = {
+      subjects: [ALICE, BOB],
+      resources: [jsonAd(ALICE, 1000), jsonAd(BOB, 2000)],
+      count: 2,
+    };
+    let release!: (result: ClientDbQueryResult) => void;
+    let delayed = false;
+    store.setClientDb(
+      mockClientDb(async () =>
+        delayed
+          ? new Promise(resolve => {
+              release = resolve;
+            })
+          : answer,
+      ),
+    );
+    const collection = new Collection(
+      store,
+      'https://example.com',
+      {
+        page_size: '30',
+        include_nested: false,
+        property: core.properties.parent,
+        value: TABLE,
+        drive: DRIVE,
+      },
+      true,
+    );
+    await collection.refresh();
+    delayed = true;
+    const refreshing = collection.refresh();
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    // A row being edited: the same member, changed, while the page is cleared.
+    const edited = new Resource(BOB);
+    edited.applyHydratedValues([
+      [core.properties.parent, TABLE],
+      [core.properties.isA, [dataBrowser.classes.folder]],
+      [core.properties.name, 'Bob, edited'],
+      [commits.properties.createdAt, 2000],
+    ]);
+    edited.loading = false;
+    collection.applyResourceChange(BOB, edited);
+
+    // It is not the whole collection, and it is not counted twice.
+    expect(collection.totalMembers).toBe(2);
+    expect(pageMembers(collection)).toEqual([ALICE, BOB]);
+
+    release(answer);
+    await refreshing;
+
+    expect(collection.totalMembers).toBe(2);
+    expect(await collection.getMembersOnPage(0)).toEqual([ALICE, BOB]);
+  });
+
+  it('does not believe an empty local answer that was asked before the drive synced', async ({
+    expect,
+  }) => {
+    const store = new Store({ serverUrl: 'https://example.com' });
+    store.setDrive(DRIVE);
+    let answer!: (result: ClientDbQueryResult) => void;
+    store.setClientDb(
+      mockClientDb(
+        () =>
+          new Promise(resolve => {
+            answer = resolve;
+          }),
+      ),
+    );
+    const collection = new Collection(
+      store,
+      'https://example.com',
+      {
+        page_size: '30',
+        include_nested: false,
+        property: core.properties.parent,
+        value: TABLE,
+        drive: DRIVE,
+      },
+      true,
+    );
+    const asking = (
+      collection as unknown as {
+        fetchPageFromLocalDb(page: number): Promise<'ok' | 'no-db'>;
+      }
+    ).fetchPageFromLocalDb(0);
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    // The sync finishes, and only then does the query that was posted before
+    // the pulled rows were written come back empty.
+    store.finishDriveSync(DRIVE, 2, Date.now());
+    answer({ subjects: [], count: 0 });
+
+    expect(await asking).toBe('no-db');
+  });
+
   it.each([false, true])(
     'does not restore a deleted member from an in-flight query (optimistic=%s)',
     async optimistic => {
@@ -359,6 +506,51 @@ describe('collection page assemble does not flash unsorted members', () => {
       assert(collection.totalMembers).toBe(2);
     },
   );
+
+  it('builds only the requested page of a big table whose rows have no sortOrder', async ({
+    expect,
+  }) => {
+    const store = new Store({ serverUrl: 'https://example.com' });
+    store.setDrive(DRIVE);
+    store.finishDriveSync(DRIVE, 2, Date.now());
+
+    const n = 300;
+    // Newest first, as an index that does not know the order may answer.
+    const subjects = Array.from(
+      { length: n },
+      (_, i) => `atomic:resource:row-${String(n - i).padStart(4, '0')}`,
+    );
+    store.setClientDb(
+      mockClientDb(async () => ({
+        subjects,
+        resources: subjects.map(s => jsonAd(s, 1000 + Number(s.slice(-4)))),
+        count: n,
+      })),
+    );
+
+    const collection = new Collection(
+      store,
+      'https://example.com',
+      {
+        page_size: '30',
+        include_nested: false,
+        property: core.properties.parent,
+        value: TABLE,
+        sort_by: dataBrowser.properties.sortOrder,
+        sort_desc: false,
+      },
+      true,
+    );
+    const hydrate = vi.spyOn(store, 'hydrateResourceFromJsonAd');
+
+    const page = await collection.getMembersOnPage(0);
+
+    // Oldest first, and only the 30 rows on the page were built.
+    expect(page[0]).toBe('atomic:resource:row-0001');
+    expect(page).toHaveLength(30);
+    expect(hydrate.mock.calls.length).toBeLessThanOrEqual(30);
+    hydrate.mockRestore();
+  });
 
   it('treats a missing sort key as missing, not the string "undefined"', async ({
     expect,

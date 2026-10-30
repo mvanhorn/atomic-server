@@ -6,6 +6,16 @@ import type {
   VersionVector,
 } from 'loro-crdt';
 import { ulid } from 'ulidx';
+import {
+  addChatLogEntry,
+  countChatLogEntries,
+  getChatLogEntry,
+  listChatLogEntries,
+  putChatLogEntry,
+  removeChatLogEntry,
+  type ChatLogEntry,
+  type NewChatLogEntry,
+} from './chat-log.js';
 import { enableLoro, LoroLoader } from './loro-loader.js';
 import { decodeB64, encodeB64 } from './base64.js';
 import { EventManager } from './EventManager.js';
@@ -18,8 +28,12 @@ import { CommitBuilder, isCommitSubject, Commit } from './commit.js';
 import {
   isAgentSubject,
   isAtomicIdentifier,
+  isNewPlaceholderSubject,
   commitSubject,
+  currentAgentSubject,
+  canonicalizeScheme,
 } from './subject.js';
+import { checkResourceConstraints } from './class-constraints.js';
 import { perfSpan } from './perf-trace.js';
 import { validateDatatype, datatypeTag, Datatype } from './datatypes.js';
 import { isUnauthorized, RequestCancelledError } from './error.js';
@@ -69,6 +83,15 @@ import {
   type AtomicValue,
 } from './value.js';
 
+/**
+ * Loro property-map keys are raw strings, so a legacy `did:ad:prop:` key would
+ * be a different key from its `atomic:prop:` twin. Always key by the canonical
+ * form. Other property URLs pass through untouched.
+ */
+function canonicalPropKey(prop: string): string {
+  return prop.startsWith('did:ad:prop:') ? canonicalizeScheme(prop) : prop;
+}
+
 /** Contains the PropertyURL / Value combinations */
 export type PropVals = Map<string, AtomicValue>;
 
@@ -110,6 +133,32 @@ export type SaveResult = 'persisted' | 'offline' | 'noop';
  * differentiate them.
  */
 export const SYSTEM_COMMIT_ORIGIN = 'origin:system';
+/**
+ * Prefix of the Loro change message on every commit that only replays state
+ * the server already has (seeding a doc from JSON-AD propvals, healing,
+ * applying a response). Unlike the origin, the message is persisted in the
+ * oplog, so readers of the oplog ("last edited" feeds) can tell hydration
+ * from an edit.
+ *
+ * Each hydration commit gets its OWN token (`c-hydration-<ulid>`, see
+ * {@link hydrationCommitMessage}), never a shared constant: the server
+ * (`change_messages_in`, `attribute_history`) credits each message to the
+ * first signed commit that carried it, so a shared message would lump every
+ * hydration under one signer. It keeps the `c-` shape so `getCreatedBy`
+ * ignores it and History buckets it like any other internal commit.
+ */
+export const HYDRATION_COMMIT_PREFIX = 'c-hydration-';
+
+/** A fresh, unique change message for one hydration commit. */
+export function hydrationCommitMessage(): string {
+  return `${HYDRATION_COMMIT_PREFIX}${ulid().toLowerCase()}`;
+}
+
+/** True for a change message written by {@link hydrationCommitMessage}. */
+export function isHydrationCommitMessage(message: string | undefined): boolean {
+  return message !== undefined && message.startsWith(HYDRATION_COMMIT_PREFIX);
+}
+
 /** Pre-rename Loro origin; still excluded from undo. */
 export const LEGACY_SYSTEM_COMMIT_ORIGIN = 'atomic:system';
 
@@ -174,6 +223,20 @@ export function normalizeLoroChangeTimestampMs(timestamp: number): number {
 }
 
 /**
+ * Thrown by an explicit save when the commit is only queued in the outbox
+ * (offline or retrying). The queued state is normal and visible through
+ * `Store.getSaveState`; callers that merely schedule saves can ignore it.
+ */
+export class SaveQueuedError extends Error {
+  constructor(
+    message = 'Save is still queued; the server has not acknowledged it.',
+  ) {
+    super(message);
+    this.name = 'SaveQueuedError';
+  }
+}
+
+/**
  * Describes an Atomic Resource, which has a Subject URL and a bunch of Property
  * / Value combinations.
  *
@@ -201,6 +264,10 @@ export class Resource<C extends OptionalClass = any> {
 
   private _subject: string;
   /** Memoized read cache derived from Loro. Rebuilt lazily when #cacheDirty. */
+  private _genesisCertCache?: {
+    encoded: string;
+    cert: ReturnType<typeof decodeGenesisCert> | undefined;
+  };
   #cache: Record<string, JSONValue> = Object.create(null);
   /** True when Loro has been modified but #cache hasn't been rebuilt yet. */
   #cacheDirty = false;
@@ -472,6 +539,18 @@ export class Resource<C extends OptionalClass = any> {
       this._loroDoc = new LoroDocClass();
       // Match the server (`lib/src/loro.rs`): record per-change Unix seconds on commit.
       this._loroDoc.setRecordTimestamp(true);
+      // Loro stamps a change with the moment its transaction BEGAN, i.e. right
+      // after the previous commit. An editor that commits through a plain
+      // `doc.commit()` (loro-prosemirror) therefore stamps the first keystroke
+      // after an idle spell with the time of the last save, so "last edited"
+      // readers (the drive Activity feed) saw typing as minutes old. Re-stamp
+      // auto-stamped (second-resolution) commits with the real time; commits
+      // with an explicit millisecond timestamp (`signAt`) are left alone.
+      this._loroDoc.subscribePreCommit(({ changeMeta, modifier }) => {
+        if (changeMeta.timestamp < 1_000_000_000_000) {
+          modifier.setTimestamp(Math.floor(Date.now() / 1000));
+        }
+      });
       this._loroMap = this._loroDoc.getMap('properties');
 
       // If the resource has a persisted Loro snapshot, import it.
@@ -485,6 +564,21 @@ export class Resource<C extends OptionalClass = any> {
           if (!isDerivedByServer(key)) {
             this.loroSetProperty(key, value);
           }
+        }
+
+        // Seeding from server-provided propvals is hydration, not an edit:
+        // leave it open and the next seal (a refetch's `applyHydratedValues`)
+        // commits it as a local write, which the outbox signs as the current
+        // agent, even for someone else's resource.
+        if (
+          !this.new &&
+          !this._dirty &&
+          this._loroDoc.getPendingTxnLength() > 0
+        ) {
+          this._loroDoc.commit({
+            origin: SYSTEM_COMMIT_ORIGIN,
+            message: hydrationCommitMessage(),
+          });
         }
       }
 
@@ -523,7 +617,10 @@ export class Resource<C extends OptionalClass = any> {
         // because `setRecordTimestamp(true)` makes even an empty commit
         // write a commit-point op and advance `oplogVersion`.
         if (this._loroDoc.getPendingTxnLength() > 0) {
-          this._loroDoc.commit({ origin: SYSTEM_COMMIT_ORIGIN });
+          this._loroDoc.commit({
+            origin: SYSTEM_COMMIT_ORIGIN,
+            message: hydrationCommitMessage(),
+          });
         }
       }
 
@@ -628,8 +725,9 @@ export class Resource<C extends OptionalClass = any> {
         // OPFS persist landing would lose the edit. `_saveInner`'s
         // offline branch awaits `saveOffline` and only then calls
         // `markDirty`, so the count rising correctly implies the
-        // edit is in clientDb.
-        if (!this._store.serverConnected) return;
+        // edit is in clientDb. (A store with a commit transport is not
+        // offline: its commits go to the transport, like to a server.)
+        if (!this._store.canCommit) return;
         this._store.outbox.markDirty(this.subject);
       });
     }
@@ -792,9 +890,11 @@ export class Resource<C extends OptionalClass = any> {
           datatypesJson?.[key] ?? this.untaggedDatatypeTag(key, value),
           value,
         );
-        nextCache[key] = origin
+        const localized = origin
           ? localizeInternalSubjects(normalized, origin)
           : normalized;
+
+        nextCache[key] = dedupeRights(key, localized);
       }
     }
 
@@ -809,7 +909,38 @@ export class Resource<C extends OptionalClass = any> {
       }
     }
 
+    // Lenses derive values for the properties the doc does not really hold.
+    // The doc is never changed; only this cache gets them.
+    const lenses = this._store?.lenses;
+
+    if (lenses && lenses.size > 0) {
+      lenses.apply(nextCache);
+    }
+
     this.#cache = nextCache;
+  }
+
+  /**
+   * Re-derive lens values after the store learned of a lens that touches one of
+   * `props`. True when this resource holds one of them and was rebuilt.
+   *
+   * @internal
+   */
+  public refreshDerivedValues(props: string[]): boolean {
+    if (!this._loroDoc || this._loading) {
+      return false;
+    }
+
+    const holds = props.some(prop => this.#cache[prop] !== undefined);
+
+    if (!holds) {
+      return false;
+    }
+
+    this.rebuildCacheFromLoro();
+    this.#cacheDirty = false;
+
+    return true;
   }
 
   /**
@@ -871,8 +1002,9 @@ export class Resource<C extends OptionalClass = any> {
     let wroteAnything = false;
 
     for (const [prop, loroValue] of Object.entries(props)) {
+      // Keys are canonical on write (`canonicalPropKey`); lookup also canonicalizes legacy docs.
       const datatype = this.store?.resources
-        .get(prop)
+        .get(canonicalizeScheme(prop))
         ?.get(core.properties.datatype)
         ?.toString();
 
@@ -998,7 +1130,17 @@ export class Resource<C extends OptionalClass = any> {
       // original list (OPFS cold-load, WS GET) merges two concurrent lists
       // and the array order flashes — table columns (`requires`/`recommends`)
       // and sidebar `isA` were the visible cases.
-      this.writeLoroListInPlace(map, prop, value);
+      //
+      // Lists of plain strings (subjects, rights) are patched instead of
+      // drained: rewriting every element on each `set()` meant two
+      // concurrent writers each deleted and re-inserted the same agents,
+      // and the merge kept both copies (the drive's read/write lists
+      // filled with repeats after invites were accepted).
+      if (value.every(item => typeof item === 'string')) {
+        this.patchLoroListInPlace(map, prop, value);
+      } else {
+        this.writeLoroListInPlace(map, prop, value);
+      }
     } else {
       // Objects: serialize to JSON string.
       map.set(prop, JSON.stringify(value));
@@ -1850,6 +1992,7 @@ export class Resource<C extends OptionalClass = any> {
   public get<Prop extends string, Returns = InferTypeOfValueInTriple<C, Prop>>(
     propUrl: Prop,
   ): Returns {
+    propUrl = canonicalPropKey(propUrl) as Prop;
     this.materializeBufferedSnapshot();
 
     if (this.#cacheDirty && this._loroDoc) {
@@ -2009,6 +2152,72 @@ export class Resource<C extends OptionalClass = any> {
     this.eventManager.emit(ResourceEvents.LocalChange, '', undefined);
   }
 
+  /**
+   * Chat log pages (class `ChatLog`): add an entry, authored by the current
+   * agent unless `a` is given, and mark the resource for saving. The entry
+   * travels in the next commit's `loroUpdate` like any other change.
+   * Returns the entry key, or undefined when Loro is not loaded.
+   */
+  public addChatLogEntry(entry: NewChatLogEntry): string | undefined {
+    const doc = this.getLoroDoc();
+    const author = entry.a ?? this.store.getAgent()?.subject;
+
+    if (!doc || !author) return undefined;
+
+    this.armStagedCommitToken();
+    const key = addChatLogEntry(doc, {
+      ...entry,
+      a: author,
+      c: entry.c ?? Date.now(),
+    });
+    this.markDirty();
+
+    return key;
+  }
+
+  /** Replace the chat log entry under `key` (an edit). Only its author may. */
+  public putChatLogEntry(key: string, entry: ChatLogEntry): void {
+    const doc = this.getLoroDoc();
+
+    if (!doc) return;
+
+    this.armStagedCommitToken();
+    putChatLogEntry(doc, key, entry);
+    this.markDirty();
+  }
+
+  /** Remove the chat log entry under `key`. Only its author or a writer of the chat may. */
+  public removeChatLogEntry(key: string): void {
+    const doc = this.getLoroDoc();
+
+    if (!doc) return;
+
+    this.armStagedCommitToken();
+    removeChatLogEntry(doc, key);
+    this.markDirty();
+  }
+
+  /** The chat log entry under `key`, if the page holds it. */
+  public getChatLogEntry(key: string): ChatLogEntry | undefined {
+    const doc = this.getLoroDoc();
+
+    return doc ? getChatLogEntry(doc, key) : undefined;
+  }
+
+  /** How many entries the chat log page holds. */
+  public countChatLogEntries(): number {
+    const doc = this.getLoroDoc();
+
+    return doc ? countChatLogEntries(doc) : 0;
+  }
+
+  /** The chat log entries, oldest first. */
+  public listChatLogEntries(): { key: string; entry: ChatLogEntry }[] {
+    const doc = this.getLoroDoc();
+
+    return doc ? listChatLogEntries(doc) : [];
+  }
+
   /** Returns a Collection with all children of this resource
    * @param pageSize The amount of children per page (default: 100)
    */
@@ -2110,7 +2319,13 @@ export class Resource<C extends OptionalClass = any> {
 
     const genesis = this.getGenesisChange();
 
-    if (!genesis || genesis.timestamp <= 0) {
+    // The earliest change may be local hydration of a legacy resource, which
+    // is stamped with the import time, not the creation time.
+    if (
+      !genesis ||
+      genesis.timestamp <= 0 ||
+      isHydrationCommitMessage(genesis.message)
+    ) {
       return undefined;
     }
 
@@ -2122,6 +2337,12 @@ export class Resource<C extends OptionalClass = any> {
    * propvals and the founding Loro change message remain legacy fallbacks.
    */
   public getCreatedBy(): string | undefined {
+    const creator = this.getCreatedByRaw();
+
+    return creator === undefined ? undefined : currentAgentSubject(creator);
+  }
+
+  private getCreatedByRaw(): string | undefined {
     const cert = this.getGenesisCertificate();
 
     if (cert) {
@@ -2155,11 +2376,24 @@ export class Resource<C extends OptionalClass = any> {
       return undefined;
     }
 
-    try {
-      return decodeGenesisCert(decodeB64(encoded));
-    } catch {
-      return undefined;
+    // The certificate never changes for a given string, and a collection
+    // reads `createdAt` of every member each time one is added, so decoding
+    // it per call made opening a big table quadratic (seconds for 1500 rows).
+    if (this._genesisCertCache?.encoded === encoded) {
+      return this._genesisCertCache.cert;
     }
+
+    let cert: ReturnType<typeof decodeGenesisCert> | undefined;
+
+    try {
+      cert = decodeGenesisCert(decodeB64(encoded));
+    } catch {
+      cert = undefined;
+    }
+
+    this._genesisCertCache = { encoded, cert };
+
+    return cert;
   }
 
   /**
@@ -2216,7 +2450,16 @@ export class Resource<C extends OptionalClass = any> {
     // where containers tracked in the plugin's mapping may not yet have a
     // `children` field, crashing in `absolutePositionToCursor`. The fork has
     // its own state and no subscribers, so checkouts here are isolated.
-    const doc = liveDoc.fork();
+    // A doc restored from a "Discard history" backup is shallow: its edit
+    // history before the restore is gone, so there is little to list and
+    // forking it can be refused. Show what we can rather than throwing.
+    let doc: LoroDoc;
+
+    try {
+      doc = liveDoc.fork();
+    } catch {
+      return [];
+    }
 
     // Loro merges sequential same-peer ops into a single Change whose
     // `length` is the operation count. Iterating only over Changes therefore
@@ -2507,7 +2750,10 @@ export class Resource<C extends OptionalClass = any> {
     // server rejects as unauthorized, forever.
     // Re-read `_loroDoc`: a `loroUpdate: undefined` value above resets it.
     if (this._loroDoc && this._loroDoc.getPendingTxnLength() > 0) {
-      this._loroDoc.commit({ origin: SYSTEM_COMMIT_ORIGIN });
+      this._loroDoc.commit({
+        origin: SYSTEM_COMMIT_ORIGIN,
+        message: hydrationCommitMessage(),
+      });
     }
   }
 
@@ -2633,7 +2879,11 @@ export class Resource<C extends OptionalClass = any> {
    *  - a local-only drive materializes the commit locally, as before.
    */
   public async destroy(agent?: Agent): Promise<void> {
-    if (this.new || this._pendingGenesis) {
+    if (
+      this.new ||
+      this._pendingGenesis ||
+      isNewPlaceholderSubject(this.subject)
+    ) {
       // Never synced (a `_new:` placeholder, or a `store.newResource` whose
       // genesis is still parked on the resource because `save()` never
       // ran): no server-side tombstone needed. Also forget any queued
@@ -2678,7 +2928,7 @@ export class Resource<C extends OptionalClass = any> {
     this.store.outbox.setDestroyCommit(this.subject, commit);
     this.store.removeResource(this.subject);
 
-    if (!this.store.serverConnected) {
+    if (!this.store.canCommit) {
       // Queued; the reconnect drain POSTs it. Resolve once the queued
       // envelope is on disk, like an offline save.
       await this.store.outbox.flush();
@@ -2714,6 +2964,7 @@ export class Resource<C extends OptionalClass = any> {
 
   /** Appends a Resource to a ResourceArray */
   public push(propUrl: string, values: JSONArray, unique?: boolean): void {
+    propUrl = canonicalPropKey(propUrl);
     const propVal = (this.get(propUrl) as JSONArray) ?? [];
 
     if (unique) {
@@ -2755,6 +3006,7 @@ export class Resource<C extends OptionalClass = any> {
    * Used for canvas strokes and other list fields that merge per element across peers.
    */
   public pushListItem(propUrl: string, item: JSONValue): void {
+    propUrl = canonicalPropKey(propUrl);
     const propVal = (this.get(propUrl) as JSONArray) ?? [];
     this.#cache[propUrl] = [...propVal, item];
     this.#cacheDirty = true;
@@ -2825,6 +3077,7 @@ export class Resource<C extends OptionalClass = any> {
    * `pushListItem`, just batched.
    */
   public replaceListItems(propUrl: string, items: JSONArray): void {
+    propUrl = canonicalPropKey(propUrl);
     this.#cache[propUrl] = [...items];
     this.#cacheDirty = true;
     this._dirty = true;
@@ -2854,7 +3107,9 @@ export class Resource<C extends OptionalClass = any> {
     const { LoroList, LoroMap } = LoroLoader.Loro;
 
     for (const [key, value] of Object.entries(obj)) {
-      if (
+      if (value === null) {
+        map.set(key, null);
+      } else if (
         typeof value === 'string' ||
         typeof value === 'number' ||
         typeof value === 'boolean'
@@ -2991,7 +3246,9 @@ export class Resource<C extends OptionalClass = any> {
     const { LoroList, LoroMap } = LoroLoader.Loro;
 
     for (const item of arr) {
-      if (Array.isArray(item)) {
+      if (item === null) {
+        list.push(null);
+      } else if (Array.isArray(item)) {
         const nested = list.pushContainer(new LoroList());
         this.writeJsonToLoroList(nested, item);
       } else if (item && typeof item === 'object') {
@@ -3085,6 +3342,7 @@ export class Resource<C extends OptionalClass = any> {
 
   /** Removes a property value combination from the resource */
   public remove(propertyUrl: string): void {
+    propertyUrl = canonicalPropKey(propertyUrl);
     this.removeUnsafe(propertyUrl);
     this._dirty = true;
     this.eventManager.emit(ResourceEvents.LocalChange, propertyUrl, undefined);
@@ -3446,7 +3704,26 @@ export class Resource<C extends OptionalClass = any> {
   /** The save currently running, so a concurrent `save()` waits for it. */
   private _inflightSave?: Promise<SaveResult>;
 
-  public async save(): Promise<SaveResult> {
+  /**
+   * Save now. A direct call is an explicit user action (Create, dialog
+   * submit, then navigate): the server's soft commit pace does not hold it
+   * back, only a BUSY refusal does (then {@link SaveQueuedError}).
+   * Background saves (`ScheduledSave`, debounced hooks) pass `background` and
+   * are spaced to the pace like the outbox's own drains.
+   */
+  public async save(opts: { background?: boolean } = {}): Promise<SaveResult> {
+    const release = opts.background
+      ? undefined
+      : this.store.outbox.holdExplicit(this.subject);
+
+    try {
+      return await this.saveSerialized();
+    } finally {
+      release?.();
+    }
+  }
+
+  private async saveSerialized(): Promise<SaveResult> {
     // Two saves running at once each sign their own commit from the same
     // state. For a draft that is two genesis certificates, so two subjects
     // for one resource: the second rename evicts the first, and every alias
@@ -3455,7 +3732,7 @@ export class Resource<C extends OptionalClass = any> {
     if (this._inflightSave) {
       await this._inflightSave.catch(() => undefined);
 
-      return this.save();
+      return this.saveSerialized();
     }
 
     this._inflightSave = this.saveOnce();
@@ -3500,10 +3777,22 @@ export class Resource<C extends OptionalClass = any> {
       throw new Error('No agent has been set, you cannot save.');
     }
 
-    if (this.store.requireOnlineWrites && !this.store.serverConnected) {
+    if (this.store.requireOnlineWrites && !this.store.canCommit) {
       throw new Error(
         'The local node is not connected; this change was not saved.',
       );
+    }
+
+    // Class `constraints`, for classes already in the local store. Never
+    // fetches: an unloaded class is skipped and the server is the authority.
+    if (hasChanges) {
+      checkResourceConstraints(this, subject => {
+        const local =
+          this.store.resources.get(subject) ??
+          this.store.resources.get(canonicalizeScheme(subject));
+
+        return local?.isReady() ? local : undefined;
+      });
     }
 
     if (!this._lastCommit) {
@@ -3568,7 +3857,7 @@ export class Resource<C extends OptionalClass = any> {
         }
       }
 
-      if (!this.store.serverConnected) {
+      if (!this.store.canCommit) {
         // Offline: the snapshot and the outbox entry are written together.
         await this.saveOffline(hasChanges);
 
@@ -3608,9 +3897,7 @@ export class Resource<C extends OptionalClass = any> {
           );
 
         if (!acknowledged) {
-          throw new Error(
-            'Save is still queued; the server has not acknowledged it.',
-          );
+          throw new SaveQueuedError();
         }
       }
 
@@ -3875,6 +4162,16 @@ export class Resource<C extends OptionalClass = any> {
     /** A trusted built-in datatype: validate and tag without fetching Property metadata. */
     knownDatatype?: Datatype,
   ): Promise<void> {
+    prop = canonicalPropKey(prop) as Prop;
+
+    if (value === undefined) {
+      // Removal is not a value to validate or a reason to fetch Property metadata.
+      // `remove` emits the `LocalChange` for this property.
+      this.remove(prop);
+
+      return;
+    }
+
     if (value instanceof Uint8Array) {
       throw new Error('Binary values (Uint8Array) cannot be set via set().');
     }
@@ -3920,13 +4217,6 @@ export class Resource<C extends OptionalClass = any> {
       }
     }
 
-    if (value === undefined) {
-      // `remove` emits the `LocalChange` for this property.
-      this.remove(prop);
-
-      return;
-    }
-
     // Write to Loro only — cache is rebuilt lazily on next get()
     this.loroSetProperty(prop, value as JSONValue);
 
@@ -3948,6 +4238,8 @@ export class Resource<C extends OptionalClass = any> {
   }
 
   public removeUnsafe(prop: string): void {
+    prop = canonicalPropKey(prop);
+
     if (prop === commits.properties.loroUpdate) {
       this._loroSnapshotBytes = undefined;
       this.resetLoroState();
@@ -4251,6 +4543,21 @@ function parseJsonPropval(value: string): JSONValue {
         return unwrapped;
       }
     }
+  }
+
+  return value;
+}
+
+/**
+ * Rights are a set. Concurrent writers can merge a rights list into repeats of
+ * every agent; collapse them (first occurrence wins) when reading.
+ */
+function dedupeRights(property: string, value: JSONValue): JSONValue {
+  if (
+    (property === core.properties.read || property === core.properties.write) &&
+    Array.isArray(value)
+  ) {
+    return [...new Set(value as JSONValue[])];
   }
 
   return value;

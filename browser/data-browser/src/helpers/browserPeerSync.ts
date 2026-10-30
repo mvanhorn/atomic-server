@@ -1,5 +1,5 @@
-import { readTemplateDemo } from '../chunks/Templates/demoSession';
 import { isLoopbackHost } from './runtimeSetting';
+import { fetchManagedInfo } from './managedServer';
 import {
   BrowserPeerSync,
   randomPeerToken,
@@ -64,17 +64,6 @@ export function savePeerLink(store: Store, link: SavedPeerLink): void {
   window.dispatchEvent(new Event(PEER_LINK_CHANGED));
 }
 
-export function removePeerLink(store: Store, drive: string): void {
-  localStorage.setItem(
-    key(store),
-    JSON.stringify(savedPeerLinks(store).filter(link => link.drive !== drive)),
-  );
-  active.get(store)?.get(drive)?.close();
-  active.get(store)?.delete(drive);
-  statuses.delete(drive);
-  window.dispatchEvent(new Event(PEER_LINK_CHANGED));
-}
-
 export function resumePeerLinks(store: Store): void {
   if (!store.getAgent() || !store.getClientDb()) return;
   let links = active.get(store);
@@ -119,11 +108,13 @@ export const PEER_SIGNALING_SETTING = 'peer-signaling-url';
 export const NO_PEER_SIGNALING =
   'Peer-to-peer sharing needs a signalling service, and none is configured. Nothing is contacted until one is.';
 
-function chosenSignalingUrl(): URL | null {
+/** The part of a Drive resource that names its signalling service. */
+type DriveSignalingSource = { get(property: string): unknown };
+
+/** Only a secure address, or a loopback one for local development. */
+function acceptableSignalingUrl(value: string): URL | null {
   try {
-    const chosen = localStorage.getItem(PEER_SIGNALING_SETTING);
-    if (!chosen) return null;
-    const url = new URL(chosen);
+    const url = new URL(value);
     const secure = url.protocol === 'wss:' || url.protocol === 'https:';
     const loopback =
       (url.protocol === 'ws:' || url.protocol === 'http:') &&
@@ -133,6 +124,45 @@ function chosenSignalingUrl(): URL | null {
   } catch {
     return null;
   }
+}
+
+function websocketUrl(endpoint: URL): string {
+  if (endpoint.protocol === 'https:') endpoint.protocol = 'wss:';
+  if (endpoint.protocol === 'http:') endpoint.protocol = 'ws:';
+
+  return endpoint.toString();
+}
+
+function chosenSignalingUrl(): URL | null {
+  try {
+    const chosen = localStorage.getItem(PEER_SIGNALING_SETTING);
+
+    return chosen ? acceptableSignalingUrl(chosen) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The signalling service a drive names for its members (its `signalingUrl`
+ * property), validated like a person's own choice, or null when it has none or
+ * the value is not acceptable. Nothing is dialled for a rejected value.
+ */
+export function driveSignalingUrl(
+  drive: DriveSignalingSource | undefined,
+): string | null {
+  const named = drive?.get(server.properties.signalingUrl);
+  if (typeof named !== 'string' || !named.trim()) return null;
+  const endpoint = acceptableSignalingUrl(named.trim());
+
+  return endpoint ? websocketUrl(endpoint) : null;
+}
+
+/** A drive's own signalling service first, then the global resolution. */
+export function peerSignalingUrlForDrive(
+  drive: DriveSignalingSource | undefined,
+): string | null {
+  return driveSignalingUrl(drive) ?? configuredPeerSignalingUrl();
 }
 
 /**
@@ -163,16 +193,12 @@ export function configuredPeerSignalingUrl(): string | null {
     return null;
   }
 
-  if (!endpoint) return null;
-  if (endpoint.protocol === 'https:') endpoint.protocol = 'wss:';
-  if (endpoint.protocol === 'http:') endpoint.protocol = 'ws:';
-
-  return endpoint.toString();
+  return endpoint ? websocketUrl(endpoint) : null;
 }
 
 /** For actions the person started: refuse instead of quietly dialling nobody. */
-export function requirePeerSignalingUrl(): string {
-  const url = configuredPeerSignalingUrl();
+export function requirePeerSignalingUrl(drive?: DriveSignalingSource): string {
+  const url = peerSignalingUrlForDrive(drive);
   if (!url) throw new Error(NO_PEER_SIGNALING);
 
   return url;
@@ -187,7 +213,7 @@ export function createPeerLink(
   ) ?? {
     drive,
     room: randomPeerToken(),
-    signalingUrl: requirePeerSignalingUrl(),
+    signalingUrl: requirePeerSignalingUrl(store.resources?.get(drive)),
   };
   const invite = { ...link, expectedPeer: store.getAgent()?.subject };
   const url = new URL('/app/sync', window.location.origin);
@@ -235,14 +261,38 @@ export async function automaticPeerRoom(drive: string): Promise<string> {
 }
 
 const discovering = new WeakSet<Store>();
+const managedByOrigin = new Map<string, Promise<boolean>>();
+
+/**
+ * Does this drive sync through a Cloud Server? Such a drive reaches every member
+ * through the node, so peers add nothing and only spend the shared budget of
+ * peer sessions: a member with many drives hit "Too many peer sessions" while
+ * their data was already on the server. Answered per server, once.
+ */
+export async function driveUsesCloudServer(
+  store: Store,
+  drive: string,
+): Promise<boolean> {
+  const serverUrl = store.getServerUrl();
+
+  if (!serverUrl || !store.isLiveSyncedDrive(drive)) return false;
+
+  let managed = managedByOrigin.get(serverUrl);
+
+  if (!managed) {
+    managed = fetchManagedInfo(serverUrl).then(info => info.managed);
+    managedByOrigin.set(serverUrl, managed);
+  }
+
+  return managed;
+}
 
 export async function discoverPeerDrives(store: Store): Promise<void> {
   const agent = store.getAgent();
   const db = store.getClientDb();
-  // Automatic discovery is background traffic nobody asked for: with no
-  // configured service it must not reach anywhere at all.
-  const signalingUrl = configuredPeerSignalingUrl();
-  if (!signalingUrl || !agent || !db || discovering.has(store)) return;
+  // Automatic discovery is background traffic nobody asked for: a drive with
+  // neither its own service nor a configured one must not reach anywhere.
+  if (!agent || !db || discovering.has(store)) return;
   discovering.add(store);
   let links = active.get(store);
 
@@ -260,8 +310,20 @@ export async function discoverPeerDrives(store: Store): Promise<void> {
     for (const resource of store.resources.values()) {
       const drive = resource.subject;
       const id = `automatic:${drive}`;
+
       if (
-        readTemplateDemo()?.drive === drive ||
+        resource.isReady() &&
+        resource.hasClasses(server.classes.drive) &&
+        (await driveUsesCloudServer(store, drive))
+      ) {
+        links.get(id)?.close();
+        links.delete(id);
+        continue;
+      }
+
+      if (!current()) return;
+
+      if (
         !isAtomicIdentifier(drive) ||
         !resource.isReady() ||
         resource.error ||
@@ -270,6 +332,9 @@ export async function discoverPeerDrives(store: Store): Promise<void> {
         savedPeerLinks(store).some(link => link.drive === drive)
       )
         continue;
+
+      const signalingUrl = peerSignalingUrlForDrive(resource);
+      if (!signalingUrl) continue;
 
       try {
         // Never bootstrap trust from a discovered stranger's snapshot.

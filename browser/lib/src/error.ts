@@ -1,6 +1,28 @@
 import { core } from './ontologies/core.js';
 import type { Resource } from './resource.js';
 
+/**
+ * Coerces whatever was thrown into an Error.
+ *
+ * Rejections, `window.onerror` and worker failures hand over anything: a
+ * string, `undefined`, a DOM event.
+ */
+export function asError(thrown: unknown): Error {
+  if (thrown instanceof Error) {
+    return thrown;
+  }
+
+  if (typeof thrown === 'string' && thrown.length > 0) {
+    return new Error(thrown);
+  }
+
+  if (thrown === null || thrown === undefined) {
+    return new Error('Something failed, and reported no reason.');
+  }
+
+  return new Error(String(thrown));
+}
+
 export function getMessageForErrorType(error: Error) {
   if (isAtomicError(error)) {
     switch (error.type) {
@@ -55,12 +77,23 @@ export const NOT_AVAILABLE_LOCALLY_MESSAGE =
   'Offline: resource not available locally. Reconnect to fetch.';
 
 /**
+ * Same as {@link NOT_AVAILABLE_LOCALLY_MESSAGE}, but a plain HTTP request to
+ * the server really was made and failed. Only this one may say the server is
+ * unreachable; the other means nothing was asked.
+ */
+export const NOT_AVAILABLE_SERVER_UNREACHABLE_MESSAGE =
+  'Offline: resource not available locally and the server could not be reached.';
+
+/**
  * The same situation for a drive this device registered as local-only: no
  * server will ever be asked, and the local database has no copy. Signing out
  * leaves that registration in place while the (per-agent) database goes, so a
  * signed-out visitor to a drive they made here ends up exactly where a visitor
  * to one they never held does — and should be sent the same way, to sign in.
  */
+/** A store with no server (`StoreOpts.noServer`) whose host does not have it. */
+export const NOT_IN_HOST_STORE_MESSAGE = "Not found in this device's store.";
+
 export const LOCAL_ONLY_NOT_FOUND_MESSAGE =
   'This resource belongs to a local-only drive but was not found in local storage.';
 
@@ -69,7 +102,16 @@ export function isNotAvailableLocally(error?: Error): boolean {
   return (
     isTransportError(error) &&
     (error!.message === NOT_AVAILABLE_LOCALLY_MESSAGE ||
+      error!.message === NOT_AVAILABLE_SERVER_UNREACHABLE_MESSAGE ||
       error!.message === LOCAL_ONLY_NOT_FOUND_MESSAGE)
+  );
+}
+
+/** True when a request to the server was made for this resource and failed. */
+export function isServerUnreachable(error?: Error): boolean {
+  return (
+    isTransportError(error) &&
+    error!.message === NOT_AVAILABLE_SERVER_UNREACHABLE_MESSAGE
   );
 }
 
@@ -113,6 +155,13 @@ export class AtomicError extends Error {
    * `message` text, as before.
    */
   public code?: number;
+  /**
+   * Set when the server answered "busy, come back later" (`ErrorCode.BUSY`,
+   * HTTP 429 or 503 with a retry hint): how long to wait, in ms. The write
+   * was not attempted, so this is neither a failure nor a reason to switch
+   * transport. See `busyRetryAfterMs`.
+   */
+  public retryAfterMs?: number;
 
   /** Creates an AtomicError. The message can be either a plain string, or a JSON-AD Error Resource */
   public constructor(message: string, type = ErrorType.Client, code?: number) {

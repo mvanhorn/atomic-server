@@ -17,6 +17,10 @@ use crate::{urls, Resource, Value};
 /// The default Error type for all Atomic Lib Errors.
 pub type AtomicResult<T> = std::result::Result<T, AtomicError>;
 
+/// Starts the message of an [AtomicErrorType::UpstreamUnreachable] error, so
+/// reporters that only see the text (Sentry) can recognise it.
+pub const UPSTREAM_UNREACHABLE_MARKER: &str = "Upstream unreachable: ";
+
 #[derive(Clone, Debug)]
 pub struct AtomicError {
     pub message: String,
@@ -31,6 +35,9 @@ pub enum AtomicErrorType {
     ParseError,
     OtherError,
     MethodNotAllowed,
+    /// Another host, asked on a caller's behalf, did not answer at all
+    /// (connection refused, DNS, timeout). A server answers 502.
+    UpstreamUnreachable,
 }
 
 impl std::error::Error for AtomicError {
@@ -88,6 +95,15 @@ impl AtomicError {
         AtomicError {
             message,
             error_type: AtomicErrorType::OtherError,
+            subject: None,
+        }
+    }
+
+    /// Another host did not answer; see [AtomicErrorType::UpstreamUnreachable].
+    pub fn upstream_unreachable(message: String) -> AtomicError {
+        AtomicError {
+            message: format!("{UPSTREAM_UNREACHABLE_MARKER}{message}"),
+            error_type: AtomicErrorType::UpstreamUnreachable,
             subject: None,
         }
     }
@@ -158,120 +174,43 @@ impl From<String> for AtomicError {
     }
 }
 
-impl From<std::boxed::Box<dyn std::error::Error>> for AtomicError {
-    fn from(error: std::boxed::Box<dyn std::error::Error>) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            subject: None,
-            error_type: AtomicErrorType::OtherError,
-        }
-    }
+/// Implements `From<$source> for AtomicError` as an `OtherError` carrying the
+/// source's `Display` text.
+macro_rules! other_error_from_display {
+    ($($(#[$meta:meta])* $source:ty),+ $(,)?) => {
+        $(
+            $(#[$meta])*
+            impl From<$source> for AtomicError {
+                fn from(error: $source) -> Self {
+                    AtomicError {
+                        message: error.to_string(),
+                        subject: None,
+                        error_type: AtomicErrorType::OtherError,
+                    }
+                }
+            }
+        )+
+    };
 }
 
-// The following feel very redundant. Can this be simplified?
+other_error_from_display!(
+    std::boxed::Box<dyn std::error::Error>,
+    std::io::Error,
+    url::ParseError,
+    serde_json::Error,
+    std::string::FromUtf8Error,
+    ParseFloatError,
+    ParseIntError,
+    DecodeError,
+    ParseBoolError,
+    Infallible,
+    #[cfg(feature = "db-sled")]
+    sled::Error,
+);
+
+// Generic over the guard type, which the macro above does not cover.
 impl<T> From<std::sync::PoisonError<T>> for AtomicError {
     fn from(error: std::sync::PoisonError<T>) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            error_type: AtomicErrorType::OtherError,
-            subject: None,
-        }
-    }
-}
-
-impl From<std::io::Error> for AtomicError {
-    fn from(error: std::io::Error) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            subject: None,
-            error_type: AtomicErrorType::OtherError,
-        }
-    }
-}
-
-impl From<url::ParseError> for AtomicError {
-    fn from(error: url::ParseError) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            error_type: AtomicErrorType::OtherError,
-            subject: None,
-        }
-    }
-}
-
-impl From<serde_json::Error> for AtomicError {
-    fn from(error: serde_json::Error) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            error_type: AtomicErrorType::OtherError,
-            subject: None,
-        }
-    }
-}
-
-impl From<std::string::FromUtf8Error> for AtomicError {
-    fn from(error: std::string::FromUtf8Error) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            error_type: AtomicErrorType::OtherError,
-            subject: None,
-        }
-    }
-}
-
-impl From<ParseFloatError> for AtomicError {
-    fn from(error: ParseFloatError) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            error_type: AtomicErrorType::OtherError,
-            subject: None,
-        }
-    }
-}
-
-impl From<ParseIntError> for AtomicError {
-    fn from(error: ParseIntError) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            subject: None,
-            error_type: AtomicErrorType::OtherError,
-        }
-    }
-}
-
-impl From<DecodeError> for AtomicError {
-    fn from(error: DecodeError) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            error_type: AtomicErrorType::OtherError,
-            subject: None,
-        }
-    }
-}
-
-impl From<ParseBoolError> for AtomicError {
-    fn from(error: ParseBoolError) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            subject: None,
-            error_type: AtomicErrorType::OtherError,
-        }
-    }
-}
-
-impl From<Infallible> for AtomicError {
-    fn from(error: Infallible) -> Self {
-        AtomicError {
-            message: error.to_string(),
-            error_type: AtomicErrorType::OtherError,
-            subject: None,
-        }
-    }
-}
-
-#[cfg(feature = "db-sled")]
-impl From<sled::Error> for AtomicError {
-    fn from(error: sled::Error) -> Self {
         AtomicError {
             message: error.to_string(),
             error_type: AtomicErrorType::OtherError,

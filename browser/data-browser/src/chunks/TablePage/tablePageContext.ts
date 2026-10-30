@@ -59,6 +59,8 @@ export interface TablePageContextType {
   aggregateOutcomes: AggregateOutcome[];
   /** Total rows the view matches — what the footer says on the left. */
   rowCount: number;
+  /** The rows have not arrived yet, so `rowCount` is not an answer. */
+  rowsLoading: boolean;
   /**
    * Sets (or clears, with `undefined`) the statistic shown under a column, in
    * the given totals row (the first one by default).
@@ -110,6 +112,8 @@ export interface TablePageContextType {
    * until it materializes.
    */
   rowSource: (index: number) => RowSource | undefined;
+  /** The kind of the active view ('table', 'calendar', …). */
+  viewKind?: string;
 }
 
 export type RowSource =
@@ -141,6 +145,7 @@ export const TablePageContext = createContext<TablePageContextType>({
   aggregates: [],
   aggregateOutcomes: [],
   rowCount: 0,
+  rowsLoading: false,
   setColumnAggregate: () => undefined,
   removeAggregateRow: () => undefined,
   canWriteTable: false,

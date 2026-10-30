@@ -110,7 +110,7 @@ impl Resource {
             let tag = datatypes.get(&prop).map(String::as_str);
             if let Some(atomic_val) = crate::loro::loro_value_to_atomic_value_tagged(&loro_val, tag)
             {
-                propvals.insert(prop, atomic_val);
+                propvals.insert(prop.clone(), dedupe_rights(&prop, atomic_val));
             }
         }
 
@@ -331,11 +331,40 @@ impl Resource {
         doc: crate::loro::AtomicLoroDoc,
         snapshot: Vec<u8>,
     ) -> AtomicResult<()> {
+        self.apply_state_doc_with_lenses(doc, snapshot, None)
+    }
+
+    /// [`Self::apply_state_doc`] that also derives values through `lenses`
+    /// (see [`crate::lens`]). The doc is never changed; only the propvals
+    /// cache gets the derived values.
+    pub fn apply_state_doc_with_lenses(
+        &mut self,
+        doc: crate::loro::AtomicLoroDoc,
+        snapshot: Vec<u8>,
+        lenses: Option<&crate::lens::LensIndex>,
+    ) -> AtomicResult<()> {
         let mut propvals = Self::materialize_propvals_from_loro_doc(&doc);
+        if let Some(lenses) = lenses {
+            lenses.apply_propvals(&mut propvals);
+        }
         propvals.insert(urls::LORO_UPDATE.into(), Value::LoroDoc(snapshot));
         self.propvals = propvals;
         self.loro = Some(doc);
         Ok(())
+    }
+
+    /// Set the served `lastCommit` on the propvals only. The value is derived
+    /// (the id of the newest retained envelope) and never written into the
+    /// Loro doc, so it costs no change in the oplog and cannot diverge between
+    /// replicas. A doc that still holds an old stamp keeps it; this wins.
+    pub(crate) fn set_derived_last_commit(&mut self, id: Value) {
+        self.propvals.insert(urls::LAST_COMMIT.into(), id);
+    }
+
+    /// Add the values `lenses` derive to the propvals, keeping real values.
+    /// Returns the properties that were derived.
+    pub fn apply_lenses(&mut self, lenses: &crate::lens::LensIndex) -> Vec<String> {
+        lenses.apply_propvals(&mut self.propvals)
     }
 
     fn set_loro_snapshot_state(&mut self, snapshot: Vec<u8>) -> AtomicResult<()> {
@@ -572,8 +601,86 @@ impl Resource {
         None
     }
 
+    /// The open doc's changes since `base`, if a doc is open.
+    pub(crate) fn export_open_delta(&self, base: &::loro::VersionVector) -> Option<Vec<u8>> {
+        self.loro.as_ref().map(|doc| doc.export_updates_since(base))
+    }
+
     pub(crate) fn export_open_state(&self) -> Option<Vec<u8>> {
         self.loro.as_ref().map(|doc| doc.export_snapshot())
+    }
+
+    /// The live Loro doc, loaded if needed. For edits no property setter
+    /// covers, such as a document's rich-text body. Follow with
+    /// [`Self::sign_pending`] or [`Self::sign_genesis_pending`].
+    pub fn live_doc(&mut self) -> AtomicResult<&crate::loro::AtomicLoroDoc> {
+        self.ensure_materialized()?;
+        Ok(self.loro())
+    }
+
+    /// Signs everything changed so far as `agent` and returns the commit
+    /// without applying it. For a caller that sends the commit through the
+    /// normal pipeline (signature, rights, subject ownership, broadcast)
+    /// instead of [`Self::save_as`], which skips the rights check. `None`
+    /// when nothing changed.
+    pub async fn sign_pending(
+        &mut self,
+        agent: &crate::agents::Agent,
+        store: &impl Storelike,
+    ) -> AtomicResult<Option<crate::Commit>> {
+        self.sync_loro_changes_to_commit_builder()?;
+        if !self.get_commit_builder().has_changes() {
+            self.reset_commit_builder();
+            return Ok(None);
+        }
+        let commit = self
+            .get_commit_builder()
+            .clone()
+            .sign(agent, store, self)
+            .await?;
+
+        Ok(Some(commit))
+    }
+
+    /// Like [`Self::sign_pending`], for a commit that destroys this resource
+    /// and, on the node, everything inside it.
+    pub async fn sign_destroy_pending(
+        &mut self,
+        agent: &crate::agents::Agent,
+        store: &impl Storelike,
+    ) -> AtomicResult<crate::Commit> {
+        self.commit.destroy(true);
+
+        self.get_commit_builder()
+            .clone()
+            .sign(agent, store, self)
+            .await
+    }
+
+    /// Like [`Self::sign_pending`], for a new DID resource: signs a genesis
+    /// commit and sets this resource's subject to the `did:ad:` it derives.
+    pub async fn sign_genesis_pending(
+        &mut self,
+        agent: &crate::agents::Agent,
+        store: &impl Storelike,
+    ) -> AtomicResult<crate::Commit> {
+        self.subject = Subject::from_raw("did:ad:placeholder", None);
+        self.commit.set_subject(self.subject.clone());
+        self.sync_loro_changes_to_commit_builder()?;
+
+        let mut builder = self.get_commit_builder().clone();
+        builder.is_genesis = true;
+        let mut commit = builder.sign(agent, store, self).await?;
+        let signature = commit
+            .signature
+            .as_ref()
+            .ok_or("No signature generated for genesis commit")?;
+        let did = Subject::from_raw(&crate::identifiers::resource_subject(signature), None);
+
+        self.subject = did.clone();
+        commit.subject = did;
+
+        Ok(commit)
     }
 
     /// Load versioned state before history reads (`get_history`, `view_at`).
@@ -618,13 +725,9 @@ impl Resource {
             .loro
             .as_ref()
             .ok_or("Versioned state not loaded — call warm_history() first")?;
-        let props = doc.get_properties_at(version)?;
-        let mut propvals = PropVals::new();
-        for (key, loro_val) in &props {
-            if let Some(atomic_val) = crate::loro::loro_value_to_atomic_value(loro_val) {
-                propvals.insert(key.clone(), atomic_val);
-            }
-        }
+        // Same materialisation as the current state (tagged values, rights
+        // dedupe, genesis metadata), applied to the doc as it was at `version`.
+        let propvals = Self::materialize_propvals_from_loro_doc(&doc.fork_at(version)?);
         Ok(Resource {
             propvals,
             subject: self.subject.clone(),
@@ -636,6 +739,13 @@ impl Resource {
     /// Returns the subject of the resource as a Subject enum.
     pub fn get_subject_enum(&self) -> &Subject {
         &self.subject
+    }
+
+    /// Hash of the blob this resource points at via its `blob` property.
+    /// `None` when it has no blob or the value is not a valid blob DID.
+    pub fn blob_hash(&self) -> Option<[u8; 32]> {
+        let value = self.propvals.get(urls::BLOB)?;
+        Subject::from_raw(&value.to_string(), None).blob_hash()
     }
 
     /// Get a value by property URL
@@ -878,11 +988,6 @@ impl Resource {
         }
     }
 
-    /// Returns all PropVals.
-    pub fn into_propvals(self) -> PropVals {
-        self.propvals
-    }
-
     /// Create a new, empty Resource.
     pub fn new(subject: String) -> Resource {
         let propvals: PropVals = HashMap::new();
@@ -968,6 +1073,19 @@ impl Resource {
         Ok(self)
     }
 
+    /// Append an entry to this `ChatLog` page's `entries` map (a Loro op, so
+    /// entries from different devices merge). Returns the entry's key; the
+    /// change is saved by `save_locally` like any other edit.
+    pub fn add_chat_entry(
+        &mut self,
+        entry: &crate::chat_log::Entry,
+    ) -> crate::errors::AtomicResult<String> {
+        self.ensure_materialized()?;
+        let key = self.loro().add_entry(entry)?;
+        self.loro().commit();
+        Ok(key)
+    }
+
     /// Append a JSON item to a Json property. CRDT-friendly — appends to the
     /// LoroList instead of replacing it. Items from different devices merge cleanly.
     pub fn push_list_item(
@@ -989,15 +1107,6 @@ impl Resource {
         self.loro().commit();
         let _ = self.record_undo_checkpoint();
         Ok(())
-    }
-
-    /// Alias for `push_list_item` (legacy name).
-    pub fn push_json_item(
-        &mut self,
-        property: &str,
-        item: serde_json::Value,
-    ) -> crate::errors::AtomicResult<()> {
-        self.push_list_item(property, item)
     }
 
     /// Insert a JSON item at a specific index in a Json property.
@@ -1146,7 +1255,7 @@ impl Resource {
         store: &impl Storelike,
     ) -> AtomicResult<Property> {
         // If it's a URL, were done quickly!
-        if is_url(shortname) {
+        if is_url(shortname) || crate::identifiers::is_prop_id(shortname) {
             return store.get_property(shortname).await;
         }
         // First, iterate over all existing properties, see if any of these work.
@@ -1203,7 +1312,11 @@ impl Resource {
         };
         let update = if let Some(ref snapshot) = base {
             let base_doc = crate::loro::AtomicLoroDoc::from_snapshot(snapshot)?;
-            doc.export_updates_since(&base_doc.oplog_vv())
+            doc.export_updates_since(
+                &base_doc
+                    .tokened_base_vv()
+                    .unwrap_or_else(|| base_doc.oplog_vv()),
+            )
         } else {
             doc.export_snapshot()
         };
@@ -1218,10 +1331,11 @@ impl Resource {
         &mut self,
         store: &impl Storelike,
         commit: crate::Commit,
+        agent: &crate::agents::Agent,
     ) -> AtomicResult<CommitResponse> {
-        let agent = store.get_default_agent()?;
         let opts = CommitOpts {
             validate_schema: true,
+            validate_constraints: true,
             validate_signature: false,
             validate_timestamp: false,
             validate_rights: false,
@@ -1305,7 +1419,7 @@ impl Resource {
         if should_post {
             crate::client::post_commit(&commit, store).await?;
         }
-        self.apply_signed_commit(store, commit).await
+        self.apply_signed_commit(store, commit, agent).await
     }
 
     /// Saves the resource (with all the changes) to the store by creating a Commit.
@@ -1325,7 +1439,7 @@ impl Resource {
             .clone()
             .sign(&agent, store, self)
             .await?;
-        self.apply_signed_commit(store, commit).await
+        self.apply_signed_commit(store, commit, &agent).await
     }
 
     /// Saves the resource as a new DID-native resource.
@@ -1371,6 +1485,7 @@ impl Resource {
 
         let opts = CommitOpts {
             validate_schema: true,
+            validate_constraints: true,
             validate_signature: true,
             validate_timestamp: false,
             validate_rights: false,
@@ -1490,7 +1605,9 @@ impl Resource {
         store: &impl Storelike,
     ) -> AtomicResult<&mut Self> {
         let full_prop = store.get_property(&property).await?;
-        if let Some(allowed) = full_prop.allows_only {
+        // An empty `allowsOnly` is a SelectProperty whose options live in the
+        // class constraint map; it restricts nothing here.
+        if let Some(allowed) = full_prop.allows_only.filter(|a| !a.is_empty()) {
             let error = Err(format!(
                 "Property '{}' does not allow value '{}'. Allowed: {:?}",
                 property, value, allowed
@@ -1769,6 +1886,7 @@ mod test {
             let subject = commit.subject.to_string();
             let opts = crate::commit::CommitOpts {
                 validate_schema: false,
+                validate_constraints: false,
                 validate_signature: true,
                 validate_timestamp: false,
                 validate_rights: false,
@@ -1986,6 +2104,7 @@ mod test {
                 commit,
                 &CommitOpts {
                     validate_schema: true,
+                    validate_constraints: true,
                     validate_signature: true,
                     validate_timestamp: true,
                     validate_rights: false,
@@ -2488,11 +2607,17 @@ mod test {
         let mut reloaded = store.get_resource(&subject).await.unwrap();
         reloaded.warm_history().unwrap();
         let history = reloaded.get_history();
+        // Both saves land in the stored doc. Rust-path saves carry no commit
+        // boundary, so Loro may merge them into one change; the server's own
+        // `lastCommit` change used to make this count 2 by accident.
         assert!(
-            history.len() >= 2,
-            "get_resource should expose merged Loro oplog (got {} entries)",
-            history.len()
+            !history.is_empty(),
+            "get_resource should expose the Loro oplog"
         );
+        match reloaded.get(stroke_data) {
+            Ok(Value::Json(serde_json::Value::Array(arr))) => assert_eq!(arr.len(), 2),
+            other => panic!("expected both strokes after two saves, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -2518,5 +2643,91 @@ mod test {
 
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].get_subject().to_string(), subject2);
+    }
+
+    /// A historical view must materialise values exactly like the current
+    /// state does: through the `datatypes` tags, not the untagged heuristics.
+    #[tokio::test]
+    async fn view_at_materialises_tagged_values_like_current_state() {
+        let store: crate::Db = init_store().await;
+        let mut resource = Resource::new_generate_subject(&store).unwrap();
+        let p = |n: &str| format!("https://atomicdata.dev/properties/{n}");
+        resource
+            .set_unsafe(p("desc"), Value::Markdown("# Hi".into()))
+            .unwrap();
+        resource
+            .set_unsafe(p("slug"), Value::Slug("my-slug".into()))
+            .unwrap();
+        resource
+            .set_unsafe(p("strokes"), Value::Json(serde_json::json!([{"x": 1}])))
+            .unwrap();
+        resource
+            .set_unsafe(
+                p("oneRef"),
+                Value::ResourceArray(vec!["https://example.com/x".into()]),
+            )
+            .unwrap();
+        resource
+            .set_unsafe(p("text"), Value::String("[not, a, list]".into()))
+            .unwrap();
+        resource.warm_history().unwrap();
+        let version = resource.get_current_version().unwrap();
+
+        let past = resource.view_at(&version).unwrap();
+
+        for key in ["desc", "slug", "strokes", "oneRef", "text"] {
+            let current = resource.get(&p(key)).unwrap();
+            let historical = past.get(&p(key)).unwrap();
+            assert_eq!(
+                std::mem::discriminant(current),
+                std::mem::discriminant(historical),
+                "{key}: current {current:?} vs historical {historical:?}"
+            );
+            assert_eq!(current.to_string(), historical.to_string(), "{key}");
+        }
+    }
+}
+
+/// Concurrent writers that rewrite a rights list in place (drain + insert) merge
+/// into a list that repeats every agent. A right is a set, so repeats carry no
+/// meaning: collapse them (first occurrence wins) when materializing.
+fn dedupe_rights(property: &str, value: Value) -> Value {
+    match value {
+        Value::ResourceArray(items) if property == urls::READ || property == urls::WRITE => {
+            let mut seen = std::collections::HashSet::new();
+            Value::ResourceArray(
+                items
+                    .into_iter()
+                    .filter(|i| seen.insert(i.to_string()))
+                    .collect(),
+            )
+        }
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod dedupe_rights_tests {
+    use super::*;
+
+    #[test]
+    fn rights_lists_collapse_repeats_but_other_lists_are_untouched() {
+        let list = || {
+            Value::ResourceArray(vec![
+                "did:ad:agent:a".into(),
+                "did:ad:agent:b".into(),
+                "did:ad:agent:a".into(),
+            ])
+        };
+        for prop in [urls::READ, urls::WRITE] {
+            match dedupe_rights(prop, list()) {
+                Value::ResourceArray(v) => assert_eq!(v.len(), 2),
+                _ => panic!("expected array"),
+            }
+        }
+        match dedupe_rights(urls::IS_A, list()) {
+            Value::ResourceArray(v) => assert_eq!(v.len(), 3),
+            _ => panic!("expected array"),
+        }
     }
 }

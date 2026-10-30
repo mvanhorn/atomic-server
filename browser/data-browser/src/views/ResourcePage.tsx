@@ -14,7 +14,10 @@ import {
   notifications,
   conversations,
   useArray,
+  useString,
 } from '@tomic/react';
+import { useNavigate } from '@tanstack/react-router';
+import { paths } from '../routes/paths';
 
 import { ContainerNarrow } from '../components/Containers';
 import Collection from '../views/CollectionPage';
@@ -25,12 +28,15 @@ import { DocumentPage } from './DocumentPage';
 import ErrorPage, { ErrorBoundary } from './ErrorPage';
 import { ClassPage } from './ClassPage';
 import { FilePage } from './File/FilePage';
+import AgentPage from './AgentPage';
 import { ResourcePageDefault } from './ResourcePageDefault';
 import { Spinner } from '../components/Spinner';
 import { ChatRoomPage } from './ChatRoomPage';
 import { ConversationPage } from './Conversation/ConversationPage';
 import { InboxPage } from './InboxPage';
+import { NotificationPage } from './NotificationPage';
 import { MessagePage } from './MessagePage';
+import { ChatLogPage } from './ChatLogPage';
 import { BookmarkPage } from './BookmarkPage/BookmarkPage';
 import { ImporterPage } from './ImporterPage.jsx';
 import { FolderPage } from './FolderPage';
@@ -166,10 +172,7 @@ const ResourcePage: React.FC<Props> = ({ subject, websiteVersion }) => {
   if (resource.loading && !loadingExceeded && !hasLoadedThisSubject) {
     return (
       <Main subject={subject}>
-        <ContainerNarrow>
-          <p>Loading...</p>
-          <Spinner />
-        </ContainerNarrow>
+        <Spinner centered />
       </Main>
     );
   }
@@ -209,7 +212,7 @@ const ResourcePage: React.FC<Props> = ({ subject, websiteVersion }) => {
       return (
         <Main subject={subject}>
           <ErrorBoundary>
-            <Suspense fallback={<Spinner />}>
+            <Suspense fallback={<Spinner centered />}>
               {websiteExportClass ? (
                 <WebsiteExportPage resource={resource} />
               ) : (
@@ -236,7 +239,7 @@ const ResourcePage: React.FC<Props> = ({ subject, websiteVersion }) => {
       return (
         <Main subject={subject}>
           <ErrorBoundary>
-            <Suspense fallback={<Spinner />}>
+            <Suspense fallback={<Spinner centered />}>
               <AppPage resource={resource} />
             </Suspense>
           </ErrorBoundary>
@@ -250,7 +253,7 @@ const ResourcePage: React.FC<Props> = ({ subject, websiteVersion }) => {
       return (
         <Main subject={subject}>
           <ErrorBoundary>
-            <Suspense fallback={<Spinner />}>
+            <Suspense fallback={<Spinner centered />}>
               <AtomicPluginPage resource={resource} drive={drive!} />
             </Suspense>
           </ErrorBoundary>
@@ -264,7 +267,7 @@ const ResourcePage: React.FC<Props> = ({ subject, websiteVersion }) => {
       return (
         <Main subject={subject}>
           <ErrorBoundary>
-            <Suspense fallback={<Spinner />}>
+            <Suspense fallback={<Spinner centered />}>
               <PluginView resource={resource} plugin={plugin} />
             </Suspense>
           </ErrorBoundary>
@@ -276,7 +279,7 @@ const ResourcePage: React.FC<Props> = ({ subject, websiteVersion }) => {
   return (
     <Main subject={subject}>
       <ErrorBoundary>
-        <Suspense fallback={<Spinner />}>
+        <Suspense fallback={<Spinner centered />}>
           {/* A fork renders through its content class's own view, so the bar is
               the only thing telling you this is not the original. */}
           <ForkBar resource={resource} />
@@ -290,6 +293,31 @@ const ResourcePage: React.FC<Props> = ({ subject, websiteVersion }) => {
   );
 };
 
+/**
+ * A Redirect has two origins. The answer to accepting an invite is never stored
+ * and has no `parent`: `InvitePage` keeps the page while it finishes the
+ * sign-in. One left behind by "Move..." is stored where the original lived, so
+ * it keeps its `parent`: follow its `destination`.
+ */
+const RedirectPage: React.FC<ResourcePageProps> = ({ resource }) => {
+  const navigate = useNavigate();
+  const [parent] = useString(resource, core.properties.parent);
+  const [destination] = useString(resource, server.properties.destination);
+  const follow = !!parent && !!destination;
+
+  useEffect(() => {
+    if (follow) {
+      navigate({
+        to: paths.show,
+        search: { subject: destination },
+        replace: true,
+      });
+    }
+  }, [follow, destination, navigate]);
+
+  return follow ? <Spinner /> : <InvitePage resource={resource} />;
+};
+
 function selectComponent(klass: string | undefined) {
   switch (klass) {
     case collections.classes.collection:
@@ -299,20 +327,25 @@ function selectComponent(klass: string | undefined) {
     case server.classes.drive:
       return DrivePage;
     case server.classes.invite:
-    case server.classes.redirect:
       return InvitePage;
+    case server.classes.redirect:
+      return RedirectPage;
     case dataBrowser.classes.document:
       return DocumentPage;
     case core.classes.class:
       return ClassPage;
     case server.classes.file:
       return FilePage;
+    case core.classes.agent:
+      return AgentPage;
     case dataBrowser.classes.chatroom:
       return ChatRoomPage;
     case conversations.classes.conversation:
       return ConversationPage;
     case dataBrowser.classes.message:
       return MessagePage;
+    case dataBrowser.classes.chatLog:
+      return ChatLogPage;
     case dataBrowser.classes.bookmark:
       return BookmarkPage;
     case dataBrowser.classes.importer:
@@ -341,6 +374,8 @@ function selectComponent(klass: string | undefined) {
       return FormBuilderPage;
     case notifications.classes.inbox:
       return InboxPage;
+    case notifications.classes.notification:
+      return NotificationPage;
     case server.classes.installation:
       return InstallationPage;
     default:

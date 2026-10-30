@@ -1,6 +1,15 @@
 import toast from 'react-hot-toast';
-import { canvas, core, dataBrowser, forks, server } from '@tomic/react';
 import {
+  canvas,
+  conversations,
+  core,
+  dataBrowser,
+  forks,
+  server,
+  type Resource,
+} from '@tomic/react';
+import {
+  FaArrowRightFromBracket,
   FaArrowUpRightFromSquare,
   FaChartPie,
   FaClock,
@@ -11,11 +20,13 @@ import {
   FaFaceSmile,
   FaImage,
   FaMagnifyingGlass,
-  FaMessage,
+  FaComments,
   FaPencil,
+  FaFolderTree,
   FaPlay,
   FaPlus,
   FaRotateRight,
+  FaTrashCanArrowUp,
   FaRegStar,
   FaShare,
   FaStar,
@@ -32,18 +43,58 @@ import {
   editURL,
   historyURL,
   importerURL,
-  shareURL,
 } from '../helpers/navigation';
+import { isContentAddressed } from '../helpers/propertyIdentity';
 import { paths } from '../routes/paths';
 import { shortcuts } from './shortcuts';
 import type { ActionContext, ActionDefinition } from './types';
+import { useMemberNames } from '../views/Conversation/ConversationTitle';
+import { leaveConversation } from '../helpers/conversations/hiddenConversations';
+import { moveToTrash } from '../helpers/trash';
+import { removeRecentResource } from '../helpers/recentResources';
 import { openSearchOverlay } from '../components/overlayState';
+import { AIIcon } from '../components/AI/AIIcon';
+import { openShareDialog } from '../components/Share/shareDialogState';
 
 /** Asks the resource bar to open its tag picker for `detail` (a subject). */
 export const OPEN_TAGS_EVENT = 'atomic-open-tags';
 
 const getParent = (ctx: ActionContext): string | undefined =>
   ctx.resource.get(core.properties.parent) as string | undefined;
+
+function LeaveConversationBody({ resource }: { resource: Resource }) {
+  const names = useMemberNames(resource);
+  const who = names.length > 0 ? names.join(', ') : 'this conversation';
+
+  return (
+    <p>
+      Leave {who}? This only removes it from your list. The other members keep
+      the conversation.
+    </p>
+  );
+}
+
+const isConversation = (ctx: ActionContext): boolean =>
+  ctx.resource.getClasses().includes(conversations.classes.conversation);
+
+// Trash membership is the direct parent only: items nested deeper in a trashed
+// folder travel with it, so only the folder itself shows Restore.
+const inTrash = (ctx: ActionContext): boolean =>
+  ctx.store.isTrashed(ctx.resource, ctx.drive);
+
+/** The drive itself and its Trash folder cannot be moved to the Trash. */
+const isTrashable = (ctx: ActionContext): boolean => {
+  if (
+    isConversation(ctx) ||
+    !ctx.drive ||
+    ctx.subject === ctx.drive ||
+    inTrash(ctx)
+  ) {
+    return false;
+  }
+
+  return ctx.subject !== ctx.store.peekTrashFolder(ctx.drive);
+};
 
 /**
  * All actions on a resource, in menu order. Ids keep the historical
@@ -205,7 +256,6 @@ export const resourceActions: ActionDefinition[] = [
       try {
         const forksFolder = await getOrCreateForksFolder(ctx.store, ctx.drive!);
         const fork = await ctx.resource.fork(forksFolder);
-        toast.success('Fork created');
         ctx.navigate(constructOpenURL(fork.subject));
       } catch (error) {
         toast.error((error as Error).message);
@@ -225,7 +275,6 @@ export const resourceActions: ActionDefinition[] = [
     run: async ctx => {
       try {
         const original = await ctx.resource.mergeIntoOriginal();
-        toast.success('Fork merged');
         ctx.navigate(constructOpenURL(original.subject));
       } catch (error) {
         toast.error((error as Error).message);
@@ -276,11 +325,21 @@ export const resourceActions: ActionDefinition[] = [
     id: 'addToChat',
     scope: 'resource',
     section: 'action',
-    label: () => 'Add to chat',
-    helper: () => 'Add the resource as context to the AI sidebar',
-    keywords: ['ai', 'assistant', 'context'],
-    icon: () => <FaMessage />,
+    label: () => 'Start AI Chat',
+    helper: () => 'Chat with AI about this resource',
+    keywords: ['ai', 'assistant', 'context', 'chat', 'start', 'new'],
+    icon: () => <AIIcon />,
     run: ctx => ctx.addToChat(),
+  },
+  {
+    id: 'comment',
+    scope: 'resource',
+    section: 'action',
+    label: () => 'Add a comment',
+    helper: () => 'Open the comments for this resource',
+    keywords: ['comments', 'discuss', 'reply'],
+    icon: () => <FaComments />,
+    run: ctx => ctx.openComments(),
   },
   {
     id: 'scope',
@@ -316,13 +375,13 @@ export const resourceActions: ActionDefinition[] = [
     id: 'share',
     scope: 'resource',
     section: 'action',
-    label: () => 'Permissions & Invites',
-    helper: () => 'Edit permissions and create invites.',
+    label: () => 'Share',
+    helper: () => 'Invite people and manage who has access.',
     keywords: ['share', 'access', 'rights', 'invite'],
     icon: () => <FaShare />,
     asTool: true,
     toolName: 'open_share_settings',
-    run: ctx => ctx.navigate(shareURL(ctx.subject)),
+    run: ctx => openShareDialog(ctx.subject),
   },
   {
     id: 'history',
@@ -377,6 +436,22 @@ export const resourceActions: ActionDefinition[] = [
     },
   },
   {
+    id: 'move',
+    scope: 'resource',
+    section: 'action',
+    label: () => 'Move...',
+    helper: () => 'Move this resource to another parent.',
+    keywords: ['move', 'parent', 'folder', 'relocate', 'reparent'],
+    icon: () => <FaFolderTree />,
+    // Drives have no parent and a property's parent is part of its id.
+    available: ctx =>
+      ctx.canWrite &&
+      ctx.openMoveDialog !== undefined &&
+      !isContentAddressed(ctx.subject) &&
+      !ctx.resource.getClasses().includes(server.classes.drive),
+    run: ctx => ctx.openMoveDialog?.(),
+  },
+  {
     id: 'import',
     scope: 'resource',
     section: 'action',
@@ -388,21 +463,98 @@ export const resourceActions: ActionDefinition[] = [
     run: ctx => ctx.navigate(importerURL(ctx.subject)),
   },
   {
+    id: 'restore',
+    scope: 'resource',
+    section: 'action',
+    label: () => 'Restore',
+    helper: () => 'Move this resource out of the Trash, back to where it was.',
+    keywords: ['trash', 'undelete', 'recover'],
+    icon: () => <FaTrashCanArrowUp />,
+    available: ctx => ctx.canWrite && inTrash(ctx),
+    run: async ctx => {
+      if (ctx.drive) {
+        await ctx.store.restore(ctx.subject, ctx.drive);
+      }
+    },
+  },
+  {
+    id: 'leave-conversation',
+    scope: 'resource',
+    section: 'action',
+    label: () => 'Leave conversation',
+    helper: () => 'Remove this conversation from your list.',
+    keywords: ['remove', 'delete', 'hide', 'message'],
+    icon: () => <FaArrowRightFromBracket />,
+    available: isConversation,
+    danger: true,
+    dangerLabel: () => 'Confirm Leave',
+    confirmation: {
+      title: () => 'Leave conversation',
+      confirmLabel: () => 'Leave',
+      body: ctx => <LeaveConversationBody resource={ctx.resource} />,
+    },
+    run: async ctx => {
+      try {
+        await leaveConversation(ctx.store, ctx.subject);
+
+        if (ctx.currentSubject === ctx.subject) ctx.navigate('/');
+      } catch (error) {
+        ctx.store.notifyError(error);
+      }
+    },
+  },
+  {
+    id: 'trash',
+    scope: 'resource',
+    section: 'action',
+    label: () => 'Move to Trash',
+    helper: () => 'Move this resource to the Trash. You can restore it later.',
+    keywords: ['delete', 'remove', 'trash'],
+    icon: () => <FaTrash />,
+    available: ctx => ctx.canWrite && isTrashable(ctx),
+    asTool: true,
+    toolName: 'move_to_trash',
+    run: async ctx => {
+      const parent = getParent(ctx);
+
+      try {
+        if (
+          !ctx.drive ||
+          !(await moveToTrash(ctx.store, ctx.subject, ctx.drive))
+        ) {
+          return;
+        }
+
+        ctx.onAfterDelete?.();
+        toast.success('Moved to Trash');
+
+        if (ctx.currentSubject === ctx.subject) {
+          ctx.navigate(parent ? constructOpenURL(parent) : '/');
+        }
+      } catch (error) {
+        toast.error(
+          `Could not move to Trash: ${error instanceof Error ? error.message : 'unknown error'}`,
+        );
+      }
+    },
+  },
+  {
     id: 'delete',
     scope: 'resource',
     section: 'action',
-    label: () => 'Delete',
-    helper: () => 'Delete this resource.',
-    keywords: ['remove', 'destroy', 'trash'],
+    label: () => 'Delete permanently',
+    helper: () => 'Delete this resource permanently. This cannot be undone.',
+    keywords: ['remove', 'destroy'],
     icon: () => <FaTrash />,
-    available: ctx => ctx.canWrite,
+    // Members of a conversation can't delete it, see `leave-conversation`.
+    available: ctx => ctx.canWrite && !isTrashable(ctx) && !isConversation(ctx),
     asTool: true,
     toolName: 'delete_resource',
     danger: true,
     dangerLabel: () => 'Confirm Delete',
     confirmation: {
       title: () => 'Delete resource',
-      confirmLabel: () => 'Delete',
+      confirmLabel: () => 'Delete permanently',
       body: ctx => (
         <p>
           Are you sure you want to delete {ctx.resource.title || ctx.subject}?
@@ -414,8 +566,12 @@ export const resourceActions: ActionDefinition[] = [
 
       try {
         await ctx.resource.destroy();
+
+        if (ctx.drive) {
+          removeRecentResource(ctx.drive, ctx.subject);
+        }
+
         ctx.onAfterDelete?.();
-        toast.success('Resource deleted!');
 
         if (ctx.currentSubject === ctx.subject) {
           ctx.navigate(parent ? constructOpenURL(parent) : '/');
@@ -462,7 +618,6 @@ export const resourceActions: ActionDefinition[] = [
         forceOverride: true,
         noWebSocket: true,
       });
-      toast.success('Resource reloaded');
     },
   },
 ];

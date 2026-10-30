@@ -13,8 +13,7 @@ use atomic_lib::{hierarchy::check_write, Storelike};
 use crate::{
     appstate::AppState,
     errors::{AtomicServerError, AtomicServerResult},
-    helpers::get_client_agent,
-    plugins::js_runtime,
+    plugins::{host_abi::JsAbi, js_runtime},
 };
 
 #[derive(serde::Deserialize, Debug)]
@@ -42,43 +41,28 @@ pub struct RunResponse {
 /// Running a plugin can spend its secrets, so it takes the same rights as
 /// changing it. Read access would let anyone who can see a plugin drain the
 /// credentials attached to it.
-#[tracing::instrument(skip(appstate, body, req))]
+#[tracing::instrument(skip(appstate, raw, req))]
 pub async fn handle_plugin_run(
     appstate: web::Data<AppState>,
-    body: web::Json<RunBody>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: crate::context::RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
+    let body: RunBody = crate::helpers::parse_json(&raw)?;
     let store = &appstate.store;
     let resource = store.get_resource(&body.plugin.clone().into()).await?;
 
-    // Signed over the request URL, as every other signed endpoint is.
-    let path_and_query = req
-        .head()
-        .uri
-        .path_and_query()
-        .ok_or("Path must be given")?
-        .to_string();
-    let signed_subject =
-        atomic_lib::Subject::from_raw(&path_and_query, None).resolve(&context.origin);
-
-    let agent = get_client_agent(req.headers(), &appstate, &signed_subject).await?;
+    let agent = crate::helpers::authenticate(&req, &appstate, &context, &raw).await?;
     check_write(store, &resource, &agent).await?;
 
     let runtime = js_runtime::embedded_runtime()?;
     let manifest = js_runtime::describe_manifest(&body.source).await?;
     check_upload(manifest.as_ref(), &body.input)?;
 
-    let host = js_runtime::StoreHost {
-        db: std::sync::Arc::new(store.clone()),
-        plugin: body.plugin.clone(),
-        drive: body.drive.clone(),
-        for_agent: agent,
-        manifest,
-    };
+    let host =
+        js_runtime::StoreHost::bound(store, &body.drive, &body.plugin, agent, manifest).await?;
 
-    host.validate_binding().await?;
-
+    let host = JsAbi::new(host, appstate.host_abi.clone());
     let outcome = runtime.run(&body.source, &body.input, host).await?;
 
     // A plugin that failed is a result to render, not a 500: the browser shows

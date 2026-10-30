@@ -8,14 +8,13 @@ use actix_web::{web, HttpResponse};
 use atomic_lib::{
     agents::ForAgent,
     db::plugin_schedule::{AutoApplyGrant, PluginSchedule, PluginScheduleInfo, PluginScheduleKey},
-    hierarchy::check_write,
     Storelike,
 };
 
 use crate::{
     appstate::AppState,
     errors::{AtomicServerError, AtomicServerResult},
-    helpers::get_client_agent,
+    helpers::authorize_plugin_write,
     plugins::scheduler::drive_terms,
 };
 
@@ -35,40 +34,15 @@ pub struct ScheduleQuery {
     pub plugin: String,
 }
 
-/// Scheduling a plugin means it will spend that plugin's secrets unattended, so
-/// it takes the same rights as changing it.
-pub(crate) async fn authorize(
-    appstate: &AppState,
-    req: &actix_web::HttpRequest,
-    context: &crate::context::RequestContext,
-    plugin: &str,
-) -> AtomicServerResult<ForAgent> {
-    let store = &appstate.store;
-    let resource = store.get_resource(&plugin.into()).await?;
-
-    let path_and_query = req
-        .head()
-        .uri
-        .path_and_query()
-        .ok_or("Path must be given")?
-        .to_string();
-    let signed_subject =
-        atomic_lib::Subject::from_raw(&path_and_query, None).resolve(&context.origin);
-
-    let agent = get_client_agent(req.headers(), appstate, &signed_subject).await?;
-    check_write(store, &resource, &agent).await?;
-
-    Ok(agent)
-}
-
-#[tracing::instrument(skip(appstate, body, req))]
+#[tracing::instrument(skip(appstate, raw, req))]
 pub async fn handle_set_schedule(
     appstate: web::Data<AppState>,
-    body: web::Json<SetScheduleBody>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: crate::context::RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
-    let agent = authorize(&appstate, &req, &context, &body.plugin).await?;
+    let body: SetScheduleBody = crate::helpers::parse_json(&raw)?;
+    let agent = authorize_plugin_write(&appstate, &req, &context, &raw, &body.plugin).await?;
 
     let key = PluginScheduleKey::new(&body.drive, &body.plugin);
 
@@ -108,7 +82,7 @@ pub async fn handle_get_schedule(
     req: actix_web::HttpRequest,
     context: crate::context::RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
-    authorize(&appstate, &req, &context, &query.plugin).await?;
+    authorize_plugin_write(&appstate, &req, &context, &[], &query.plugin).await?;
 
     Ok(HttpResponse::Ok().json(read(
         &appstate,
@@ -124,7 +98,7 @@ pub async fn handle_clear_pending(
     req: actix_web::HttpRequest,
     context: crate::context::RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
-    authorize(&appstate, &req, &context, &query.plugin).await?;
+    authorize_plugin_write(&appstate, &req, &context, &[], &query.plugin).await?;
 
     let key = PluginScheduleKey::new(&query.drive, &query.plugin);
 
@@ -150,14 +124,15 @@ pub struct AutoApplyBody {
 /// and applied. Granting it before that would mean approving code by its
 /// description rather than by what it does — which is the one thing the whole
 /// propose-then-approve model exists to avoid.
-#[tracing::instrument(skip(appstate, body, req))]
+#[tracing::instrument(skip(appstate, raw, req))]
 pub async fn handle_set_auto_apply(
     appstate: web::Data<AppState>,
-    body: web::Json<AutoApplyBody>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: crate::context::RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
-    let agent = authorize(&appstate, &req, &context, &body.plugin).await?;
+    let body: AutoApplyBody = crate::helpers::parse_json(&raw)?;
+    let agent = authorize_plugin_write(&appstate, &req, &context, &raw, &body.plugin).await?;
     let key = PluginScheduleKey::new(&body.drive, &body.plugin);
 
     let mut schedule = appstate.store.get_plugin_schedule(&key)?.ok_or_else(|| {
@@ -173,17 +148,33 @@ pub async fn handle_set_auto_apply(
         return Ok(HttpResponse::Ok().json(read(&appstate, &key)?));
     }
 
-    let (reviewed, approved_source) = reviewed_run(&appstate, &body.drive, &body.plugin).await?;
+    schedule.auto_apply =
+        Some(build_auto_apply_grant(&appstate, &agent, &body.drive, &body.plugin).await?);
 
-    crate::plugins::js_runtime::describe_manifest(&approved_source).await?;
+    appstate.store.set_plugin_schedule(&key, &schedule)?;
 
-    let ForAgent::AgentSubject(subject) = &agent else {
+    Ok(HttpResponse::Ok().json(read(&appstate, &key)?))
+}
+
+/// The grant that lets a plugin write unattended as `agent`: the reviewed run
+/// it rests on and an immutable release of the approved source and schemas.
+/// Shared by schedules and triggers, which take the same precondition.
+pub(crate) async fn build_auto_apply_grant(
+    appstate: &AppState,
+    agent: &ForAgent,
+    drive: &str,
+    plugin: &str,
+) -> AtomicServerResult<AutoApplyGrant> {
+    let (reviewed, approved_source) = reviewed_run(appstate, drive, plugin).await?;
+    let manifest = crate::plugins::js_runtime::describe_manifest(&approved_source).await?;
+
+    let ForAgent::AgentSubject(subject) = agent else {
         return Err(AtomicServerError::bad_request(
             "Only a signed-in agent can allow a plugin to write unattended",
         ));
     };
 
-    schedule.auto_apply = Some(AutoApplyGrant {
+    Ok(AutoApplyGrant {
         agent: subject.to_string(),
         granted_at: atomic_lib::utils::now(),
         reviewed_run: Some(reviewed),
@@ -191,14 +182,12 @@ pub async fn handle_set_auto_apply(
             appstate.store.publish_plugin_release(
                 &atomic_lib::db::plugin_release::PluginRelease {
                     source: Some(approved_source.clone()),
-                    manifest: serde_json::json!(
-                        crate::plugins::js_runtime::describe_manifest(&approved_source).await?
-                    ),
+                    manifest: serde_json::json!(manifest),
                     runtime: atomic_lib::db::plugin_release::RUNTIME.into(),
                     schemas: crate::plugins::scheduler::plugin_schema_bindings(
                         &appstate.store,
-                        &body.drive,
-                        &body.plugin,
+                        drive,
+                        plugin,
                     )
                     .await?,
                     ..Default::default()
@@ -206,11 +195,7 @@ pub async fn handle_set_auto_apply(
             )?,
         ),
         source: Some(approved_source),
-    });
-
-    appstate.store.set_plugin_schedule(&key, &schedule)?;
-
-    Ok(HttpResponse::Ok().json(read(&appstate, &key)?))
+    })
 }
 
 /// Refuses to arm a plugin whose secrets need a person present.
@@ -329,11 +314,12 @@ fn read(
 /// Resume the saved plan under its original approval, never rerun the script.
 pub async fn handle_resume(
     appstate: web::Data<AppState>,
-    body: web::Json<ScheduleQuery>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: crate::context::RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
-    authorize(&appstate, &req, &context, &body.plugin).await?;
+    let body: ScheduleQuery = crate::helpers::parse_json(&raw)?;
+    authorize_plugin_write(&appstate, &req, &context, &raw, &body.plugin).await?;
     let _execution = crate::plugins::scheduler::EXECUTION_LOCK.lock().await;
     let key = PluginScheduleKey::new(&body.drive, &body.plugin);
     let mut schedule = appstate

@@ -15,7 +15,7 @@ Libraries and clients (all MIT licenced) that work great with [atomic-server](at
 ## Want to add to this list? Some ideas for tooling
 
 This document contains a set of ideas that would help achieve that success.
-Open a PR and [edit this file](https://github.com/atomicdata-dev/atomic-server/edit/develop/docs/src/tooling.md) to add your project!
+Open a PR and [edit this file](https://github.com/ontola/atomic-server/edit/develop/docs/src/tooling.md) to add your project!
 
 ### Atomic Companion
 
@@ -38,4 +38,4 @@ A mobile app for granting permissions to your data and signing things. See [gith
 
 ### Atomic-Dart as a pub.dev package
 
-The [Flutter SDK](flutter.md) exists but lives inside the reference app. Extracting it into a published Dart package would let other apps depend on it directly; the plan is in `planning/dart-sdk-package.md` in the repository.
+The [Flutter SDK](flutter.md) exists as two packages in the repository, `atomic_store` and `atomic_store_flutter`. What remains is publishing them to pub.dev, so apps can depend on a version instead of a git ref.

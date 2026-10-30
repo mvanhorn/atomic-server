@@ -10,6 +10,7 @@ import React, {
 import {
   core,
   dataBrowser,
+  server,
   urls,
   useArray,
   useCanWrite,
@@ -29,9 +30,15 @@ import { Dialog, useDialog } from '../Dialog';
 import { Button } from '../Button';
 import { ErrorLook } from '../ErrorLook';
 import { TeamProfileStep } from '../TeamProfileStep';
-import { profileReviewedBefore, rememberProfileReviewed } from '../InviteForm';
+import {
+  profileReviewedBefore,
+  rememberProfileReviewed,
+} from './profileReviewed';
+import { paths } from '../../routes/paths';
+import { useNavigateWithTransition } from '../../hooks/useNavigateWithTransition';
 import { useIsPrivateDrive } from '@hooks/useIsPrivateDrive';
 import { useInheritedRights } from '../../routes/Share/useInheritedRights';
+import { CLOUD_SERVER_PRICE } from '../../helpers/cloudServerPrice';
 import { getManagedPortalUrl } from '../../helpers/managed/cloudSync';
 import {
   accountAddress,
@@ -39,13 +46,21 @@ import {
 } from '../../helpers/managed/session';
 import { sendShareInvites } from '../../helpers/managed/shareInvites';
 import { EmailInviteInput, isEmailAddress } from './EmailInviteInput';
+import { describeEditorSeats, useEditorSeats } from './useEditorSeats';
 import { PeopleWithAccess, effectiveRole } from './PeopleWithAccess';
 import { ResourceLinkNavigationContext } from '../ResourceLinkNavigationContext';
 import { PublicAccess } from './PublicAccess';
-import { RoleSelect, type ShareRole } from './RoleSelect';
+import { RoleSwitch, type ShareRole } from './RoleSelect';
 import { useShareRights } from './useShareRights';
+import { usePendingInvites } from './usePendingInvites';
 import { useClassLabel } from './useClassLabel';
 import { inviteLinkPrefix, useCreateInviteLink } from './useCreateInviteLink';
+import {
+  UNLIMITED,
+  UsageLimitField,
+  parseMaxUsages,
+  type UsageLimitState,
+} from './UsageLimit';
 
 export interface ShareDialogProps {
   subject: string;
@@ -186,11 +201,18 @@ function ShareOverview({
 }): JSX.Element {
   const isSaas = !!getManagedPortalUrl();
   const isPrivateDrive = useIsPrivateDrive(resource.subject);
+  const store = useStore();
+  const isUnhostedDrive =
+    canWrite &&
+    resource.hasClasses(server.classes.drive) &&
+    store.isLocalOnlyDrive(resource.subject);
   const [agent] = useCurrentAgent();
   const [title] = useTitle(resource);
   const [rights, setRole] = useShareRights(resource);
   const inheritedRights = useInheritedRights(resource);
   const createInviteLink = useCreateInviteLink(resource);
+  const editorSeats = useEditorSeats(resource);
+  const pending = usePendingInvites(resource.subject);
   const agentDetail = useCurrentAgentDetail(agent?.subject, isSaas);
   const agentResource = useResource(agent?.subject);
   const [agentName] = useTitle(agentResource);
@@ -245,6 +267,11 @@ function ShareOverview({
         inviterName: agentName,
         message: message.trim(),
       });
+      const sent = Array.from(new Set(recipients));
+      // The invites are out; failing to note them must not read as a failed send.
+      await pending
+        .record(sent, emailRole)
+        .catch(error => store.notifyError(error as Error));
       toast.success(
         recipients.length === 1
           ? `Invite sent to ${recipients[0]}`
@@ -266,6 +293,13 @@ function ShareOverview({
       <Dialog.Content>
         <Stack>
           {isPrivateDrive && <PrivateDriveWarning />}
+          {isUnhostedDrive && (
+            <UnhostedDriveNotice
+              subject={resource.subject}
+              isSaas={isSaas}
+              onDone={onDone}
+            />
+          )}
           {canWrite && isSaas && (
             <EmailInviteInput
               emails={emails}
@@ -276,6 +310,9 @@ function ShareOverview({
               onRoleChange={setEmailRole}
               disabled={sending}
             />
+          )}
+          {canWrite && isSaas && editorSeats && (
+            <SeatsNote>{describeEditorSeats(editorSeats)}</SeatsNote>
           )}
           {canWrite && !isSaas && (
             <InviteLinkField createInviteLink={createInviteLink} />
@@ -311,6 +348,8 @@ function ShareOverview({
                   )}
                   currentAgentDetail={agentDetail}
                   onSetRole={canWrite ? setRole : undefined}
+                  invites={pending.invites}
+                  onRemoveInvite={pending.remove}
                 />
               </ResourceLinkNavigationContext.Provider>
               <PublicAccess
@@ -370,8 +409,9 @@ type CreateInviteLink = ReturnType<typeof useCreateInviteLink>;
 async function copyInviteLink(
   createInviteLink: CreateInviteLink,
   role: ShareRole,
+  maxUsages?: number,
 ): Promise<string> {
-  const link = await createInviteLink({ write: role === 'write' });
+  const link = await createInviteLink({ write: role === 'write', maxUsages });
 
   try {
     await navigator.clipboard.writeText(link);
@@ -414,10 +454,9 @@ function CopyInviteLinkSplit({
       >
         Copy invite link
       </SplitButton>
-      <RoleSelect
-        plain
+      <RoleSwitch
         value={role}
-        onChange={r => r !== 'remove' && setRole(r)}
+        onChange={setRole}
         aria-label='Role for people who join with the link'
       />
     </Split>
@@ -437,6 +476,7 @@ function InviteLinkField({
 }): JSX.Element {
   const store = useStore();
   const [role, setRole] = useState<ShareRole>('write');
+  const [limit, setLimit] = useState<UsageLimitState>(UNLIMITED);
   const [link, setLink] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<Error>();
@@ -446,7 +486,8 @@ function InviteLinkField({
     setErr(undefined);
 
     try {
-      setLink(await copyInviteLink(createInviteLink, role));
+      const maxUsages = parseMaxUsages(limit);
+      setLink(await copyInviteLink(createInviteLink, role, maxUsages));
     } catch (e) {
       setErr(e as Error);
     }
@@ -466,10 +507,9 @@ function InviteLinkField({
           >
             {link ?? inviteLinkPrefix(store.getServerUrl())}
           </LinkText>
-          <RoleSelect
+          <RoleSwitch
             value={role}
             onChange={r => {
-              if (r === 'remove') return;
               setRole(r);
               setLink(undefined);
             }}
@@ -480,6 +520,14 @@ function InviteLinkField({
           {busy ? 'Preparing invite…' : 'Copy invite link'}
         </Button>
       </LinkRow>
+      <UsageLimitField
+        limit={limit}
+        onChange={next => {
+          setLimit(next);
+          setLink(undefined);
+        }}
+        disabled={busy}
+      />
       {err && <ErrorLook>{err.message}</ErrorLook>}
     </>
   );
@@ -531,6 +579,60 @@ function PrivateDriveWarning(): JSX.Element {
         work with someone, make a drive for the work and share that instead.
       </span>
     </PrivateDriveWarningBox>
+  );
+}
+
+function UnhostedDriveNotice({
+  subject,
+  isSaas,
+  onDone,
+}: {
+  subject: string;
+  isSaas: boolean;
+  onDone: () => void;
+}): JSX.Element {
+  return (
+    <PrivateDriveWarningBox role='note' data-test='unhosted-drive-notice'>
+      <FaTriangleExclamation />
+      <UnhostedBody>
+        <span>
+          This drive is not on a server. People you invite can open it only
+          while one of your devices has it open in a browser.
+        </span>
+        {isSaas && <UpgradePitch subject={subject} onDone={onDone} />}
+      </UnhostedBody>
+    </PrivateDriveWarningBox>
+  );
+}
+
+function UpgradePitch({
+  subject,
+  onDone,
+}: {
+  subject: string;
+  onDone: () => void;
+}): JSX.Element {
+  const navigate = useNavigateWithTransition();
+
+  return (
+    <>
+      <span>
+        <strong>
+          A Cloud Server keeps this drive online for everyone, so nobody has to
+          keep a browser open.
+        </strong>
+      </span>
+      <UpgradeButton
+        onClick={() => {
+          onDone();
+          void navigate(
+            `${paths.sync}?${new URLSearchParams({ drive: subject })}`,
+          );
+        }}
+      >
+        Upgrade to Cloud Server from {CLOUD_SERVER_PRICE}
+      </UpgradeButton>
+    </>
   );
 }
 
@@ -597,25 +699,25 @@ const MessageField = styled.div`
   }
 `;
 
+const SeatsNote = styled.p`
+  margin: 0;
+  font-size: 0.9em;
+  color: ${p => p.theme.colors.textLight};
+`;
+
 const Optional = styled.span`
   color: ${p => p.theme.colors.textLight};
 `;
 
 const Split = styled.div`
   display: inline-flex;
-  align-items: stretch;
-  border: 1px solid ${p => p.theme.colors.bg2};
-  border-radius: ${p => p.theme.radius};
-  overflow: hidden;
-
-  & > span {
-    border-left: 1px solid ${p => p.theme.colors.bg2};
-    border-radius: 0;
-  }
+  align-items: center;
+  gap: 0.75rem;
 `;
 
 const SplitButton = styled.button`
-  border: none;
+  border: 1px solid ${p => p.theme.colors.bg2};
+  border-radius: ${p => p.theme.radius};
   background: ${p => p.theme.colors.bg};
   color: ${p => p.theme.colors.text};
   font: inherit;
@@ -665,6 +767,20 @@ const LinkText = styled.span<{ $muted: boolean }>`
   white-space: nowrap;
   color: ${p => (p.$muted ? p.theme.colors.textLight : p.theme.colors.text)};
   user-select: all;
+`;
+
+const UnhostedBody = styled.span`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+  min-width: 0;
+`;
+
+const UpgradeButton = styled(Button)`
+  max-width: 100%;
+  white-space: normal;
+  text-align: start;
 `;
 
 /**

@@ -1,4 +1,4 @@
-import { RequestCancelledError } from './error.js';
+import { AtomicError, RequestCancelledError } from './error.js';
 /**
  * Single durable queue for "writes that haven't reached the server".
  *
@@ -102,6 +102,34 @@ export interface OutboxEntry {
    *  scheduler stops waking for it. Cleared by `markDirty` — a fresh local edit
    *  is a new signal worth re-attempting (rights may have since been granted). */
   blocked?: boolean;
+  /** Set once a finished drive resync has re-armed this entry after the server
+   *  refused it for a missing parent. One automatic re-arm per entry: if the
+   *  resync did not deliver the parent, a second block is final until the next
+   *  edit, instead of a retry round on every reconnect. Cleared with the block
+   *  by a fresh edit. */
+  rearmedAfterResync?: boolean;
+  /** Epoch ms before which this entry must not be sent: the server refused
+   *  it as BUSY (or rate limited it) and said when to come back. Not a
+   *  failure: it is never counted in `failures` and never persisted. */
+  busyUntil?: number;
+}
+
+/** After this long without a pace report the server hint is forgotten. */
+export const PACE_QUIET_MS = 60_000;
+
+/** Random extra wait added to a BUSY retry delay, as a fraction of it (capped
+ *  at `BUSY_JITTER_MAX_MS`), so clients the server told the same thing do not
+ *  return in one wave. */
+const BUSY_JITTER_FRACTION = 0.25;
+const BUSY_JITTER_MAX_MS = 1000;
+
+/** Bound on remembered last-commit times. */
+const LAST_COMMIT_MAX = 2048;
+
+/** The wait a commit failure asks for ("busy, come back later"), if it is
+ *  one. Such a failure is deferred, not counted: nothing was attempted. */
+export function busyDelayMs(e: unknown): number | undefined {
+  return e instanceof AtomicError ? e.retryAfterMs : undefined;
 }
 
 /** Exponential backoff before re-attempting a failed drain: 1s, 2s, 4s … capped
@@ -262,6 +290,11 @@ export function isNotEnrolledMessage(message: string | undefined): boolean {
   return !!message?.includes('is not enrolled for sync on this node');
 }
 
+/** The server refused a commit because it does not hold the commit's parent. */
+export function isMissingParentMessage(message: string): boolean {
+  return /Parent of .+ not found/.test(message);
+}
+
 /**
  * Pattern-match server errors that mean "this drain cannot succeed by
  * retrying, but the user write is not necessarily lost." Unlike
@@ -311,8 +344,9 @@ export function isUnrecoverableCommitErrorMessage(message: string): boolean {
   // (`resources.rs` get_parent). The node does not hold the commit's parent,
   // e.g. a drive that was switched to a node without its root ever being
   // copied. Every retry fails identically, so park the entry (keep the edit)
-  // instead of spinning; a resync of the drive re-arms it.
-  if (/Parent of .+ not found/.test(message)) {
+  // instead of spinning; a finished resync of the drive re-arms it
+  // (`LocalOutbox.rearmParentBlocked`).
+  if (isMissingParentMessage(message)) {
     return true;
   }
 
@@ -504,6 +538,14 @@ export class LocalOutbox {
   private writeChain: Promise<void> = Promise.resolve();
   /** Whether the entries are complete: false from {@link expectDatabase}
    *  until the database's rows are merged or it is known not to come. */
+  /** The server's latest write-load hint (`pace_ms`), see
+   *  {@link setServerPace}. In ms; 0 = no pressure. */
+  private serverPaceMs = 0;
+  private paceReportedAt = 0;
+  /** When each subject last had a commit acknowledged, for pacing. */
+  private lastCommitAt = new Map<string, number>();
+  /** Subjects with an explicit save running, with a count. */
+  private explicit = new Map<string, number>();
   private _hydrated = true;
   private hydratedWaiters: Array<() => void> = [];
   /** Set by {@link expectDatabase}: after a {@link rebind}, the new agent's
@@ -692,12 +734,16 @@ export class LocalOutbox {
   }
 
   private setHydrated(hydrated: boolean): void {
+    const was = this._hydrated;
     this._hydrated = hydrated;
     if (!hydrated) return;
 
     const waiters = this.hydratedWaiters;
     this.hydratedWaiters = [];
     for (const resolve of waiters) resolve();
+
+    // What waited to know whether an entry exists can go on.
+    if (!was) this.onChange();
   }
 
   /** Record a mutation of `subject`'s entry: persist it and tell the store. */
@@ -777,6 +823,7 @@ export class LocalOutbox {
       if (existing.blocked) {
         existing.blocked = false;
         existing.failures = 0;
+        existing.rearmedAfterResync = false;
       }
 
       this.changed(subject);
@@ -789,6 +836,37 @@ export class LocalOutbox {
       enqueuedAt: Date.now(),
     });
     this.changed(subject);
+  }
+
+  /**
+   * Re-arm the entries parked because the server lacked their parent, for the
+   * subjects `inDrive` accepts. A drive resync is what delivers a parent the
+   * server never received (a drive root, after switching a drive to a node),
+   * so once one has finished the same commit can succeed. Each entry is
+   * re-armed once: a resync that did not deliver the parent leaves it parked
+   * until the next edit. Returns how many entries were re-armed.
+   */
+  rearmParentBlocked(inDrive: (subject: string) => boolean): number {
+    let rearmed = 0;
+
+    for (const entry of this.entries.values()) {
+      if (
+        !entry.blocked ||
+        entry.rearmedAfterResync ||
+        !isMissingParentMessage(entry.lastAttemptError ?? '') ||
+        !inDrive(entry.subject)
+      ) {
+        continue;
+      }
+
+      entry.blocked = false;
+      entry.failures = 0;
+      entry.rearmedAfterResync = true;
+      rearmed++;
+      this.changed(entry.subject);
+    }
+
+    return rearmed;
   }
 
   /** Clear the dirty bit for a subject. Called by the drain after the
@@ -951,16 +1029,15 @@ export class LocalOutbox {
   nextDueAt(): number | undefined {
     let soonest: number | undefined;
 
+    const now = Date.now();
+
     for (const e of this.entries.values()) {
       // Blocked entries never become due on their own — they wait for a fresh
       // `markDirty`. Excluding them lets `nextDueAt` return undefined when
       // nothing is drainable, so the scheduler doesn't arm a no-op timer.
       if (e.blocked) continue;
 
-      const due =
-        e.failures && e.lastAttemptAt !== undefined
-          ? e.lastAttemptAt + drainBackoffMs(e.failures)
-          : 0;
+      const due = this.dueAtOf(e, now);
 
       if (soonest === undefined || due < soonest) {
         soonest = due;
@@ -968,6 +1045,87 @@ export class LocalOutbox {
     }
 
     return soonest;
+  }
+
+  /** Epoch ms from which `e` may be sent: the latest of its failure backoff,
+   *  its BUSY wait and the server's commit pacing. 0 when due now. */
+  private dueAtOf(e: OutboxEntry, now: number): number {
+    const backoff =
+      e.failures && e.lastAttemptAt !== undefined
+        ? e.lastAttemptAt + drainBackoffMs(e.failures)
+        : 0;
+
+    return Math.max(backoff, e.busyUntil ?? 0, this.paceDueAt(e, now));
+  }
+
+  /** Report the `pace_ms` the server sent with a `COMMIT_OK` (or the
+   *  `X-Atomic-Pace-Ms` header): the least time to leave between commits of
+   *  one resource. A higher hint takes effect at once; a lower one (0 when
+   *  the load is gone) only halves the current pace per report, so the
+   *  interval relaxes smoothly instead of snapping back into a herd. */
+  setServerPace(ms: number, now: number = Date.now()): void {
+    if (!Number.isFinite(ms) || ms < 0) return;
+
+    this.serverPaceMs =
+      ms >= this.serverPaceMs
+        ? ms
+        : Math.max(ms, Math.floor(this.serverPaceMs / 2));
+    this.paceReportedAt = now;
+  }
+
+  /** The commit interval the server currently asks for, in ms. Forgotten
+   *  after {@link PACE_QUIET_MS} without a report. */
+  paceMs(now: number = Date.now()): number {
+    return now - this.paceReportedAt > PACE_QUIET_MS ? 0 : this.serverPaceMs;
+  }
+
+  /** Exempt `subject` from the soft pace while an explicit (non-background)
+   *  save of it runs. BUSY waits still apply. Returns the release function. */
+  holdExplicit(subject: string): () => void {
+    this.explicit.set(subject, (this.explicit.get(subject) ?? 0) + 1);
+    let released = false;
+
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.explicit.get(subject) ?? 1) - 1;
+
+      if (left > 0) this.explicit.set(subject, left);
+      else this.explicit.delete(subject);
+    };
+  }
+
+  /** Record that a commit of `subject` was acknowledged, which starts its
+   *  pacing interval. */
+  noteCommitted(subject: string, now: number = Date.now()): void {
+    this.lastCommitAt.delete(subject);
+    this.lastCommitAt.set(subject, now);
+
+    // Oldest first (Map keeps insertion order): drop what pacing no longer
+    // needs, and bound the map regardless.
+    for (const [key, at] of this.lastCommitAt) {
+      if (
+        this.lastCommitAt.size <= LAST_COMMIT_MAX &&
+        now - at <= PACE_QUIET_MS
+      ) {
+        break;
+      }
+
+      this.lastCommitAt.delete(key);
+    }
+  }
+
+  /** When pacing lets `e` go out again. Creations and deletions are not
+   *  stretched: callers wait on them, and they carry no accumulated edits. */
+  private paceDueAt(e: OutboxEntry, now: number): number {
+    if (e.signedGenesis || e.signedDestroy) return 0;
+    // An explicit save is in progress for it: the user is waiting.
+    if (this.explicit.has(e.subject)) return 0;
+
+    const pace = this.paceMs(now);
+    const last = this.lastCommitAt.get(e.subject);
+
+    return pace > 0 && last !== undefined ? last + pace : 0;
   }
 
   /** True while a drain is in flight. Mirrors `drainInFlight` for
@@ -1055,18 +1213,16 @@ export class LocalOutbox {
       // waits for a fresh `markDirty` to re-arm — never retried on its own.
       if (live.blocked) return;
 
-      // Backoff: skip an entry still inside its post-failure window. The next
-      // drain (scheduled at `nextDueAt`) re-attempts it once it's due. Prevents
-      // the immediate-retry spin on a persistently-failing commit.
-      if (
-        live.failures &&
-        live.lastAttemptAt !== undefined &&
-        Date.now() < live.lastAttemptAt + drainBackoffMs(live.failures)
-      ) {
-        return;
-      }
+      // Not due yet: still inside its post-failure backoff, a BUSY wait, or
+      // the commit pace since this subject's last commit. The next drain
+      // (scheduled at `nextDueAt`) picks it up; edits keep accumulating in
+      // the Loro doc and go out as one merged delta.
+      const now = Date.now();
 
-      live.lastAttemptAt = Date.now();
+      if (now < this.dueAtOf(live, now)) return;
+
+      live.busyUntil = undefined;
+      live.lastAttemptAt = now;
 
       try {
         await ctx.drainSubject(live.subject);
@@ -1078,6 +1234,23 @@ export class LocalOutbox {
         const stillLive = this.entries.get(entry.subject);
         if (stillLive) stillLive.failures = 0;
       } catch (e) {
+        // "Busy, come back in N ms": the server did not look at the commit.
+        // Wait, keep every edit queued, and do not count a failure or
+        // report it. The node is overloaded, so also slow the other
+        // subjects down to at least that interval.
+        const busyMs = busyDelayMs(e);
+
+        if (busyMs !== undefined) {
+          const jitter =
+            Math.random() *
+            Math.min(BUSY_JITTER_MAX_MS, busyMs * BUSY_JITTER_FRACTION);
+          live.busyUntil = Date.now() + busyMs + jitter;
+          this.setServerPace(busyMs);
+          this.changed(entry.subject);
+
+          return;
+        }
+
         live.lastAttemptFailure = { cause: e };
         // Explicit disconnect cancels the attempt, not the durable write.
         // Keep it queued for reconnect without escalating retry failures.
@@ -1463,7 +1636,10 @@ export function isSettledDestroyErrorMessage(message: string): boolean {
   return (
     message.includes('was already applied here; refusing replay') ||
     message.includes("predates the resource's genesis") ||
-    message.includes('is_genesis: false, but the resource does not exist yet')
+    message.includes(
+      'is_genesis: false, but the resource does not exist yet',
+    ) ||
+    message.includes('has no such resource to destroy')
   );
 }
 

@@ -16,7 +16,7 @@ use atomic_lib::{
     vault::store::{MemoryVaultStore, VaultObjectStore},
     vault::sync::{
         commit_lane_state, drive_prefix, export_vault_segment, import_vault_batch,
-        CheckpointPolicy, SegmentKind,
+        CheckpointPolicy, HistoryKeep, SegmentKind,
     },
     Db, Resource, Subject, Value,
 };
@@ -44,7 +44,8 @@ const WRONG_KEY_MARKER: &str = "ATOMIC_DB_WRONG_KEY";
 /// as a plain degraded-mode sentence rather than a wasm stack trace.
 const STORAGE_BLOCKED_MARKER: &str = "ATOMIC_DB_STORAGE_BLOCKED";
 
-/// A client-side Atomic Data database backed by redb (in-memory, future OPFS).
+/// A client-side Atomic Data database backed by redb with in-memory and
+/// persistent browser OPFS storage.
 /// Provides indexed queries, resource storage, and commit application.
 ///
 /// A JS binding over [`AtomicNode`]: query and commit application go through
@@ -507,6 +508,7 @@ impl ClientDb {
         filters: JsValue,
         aggregation: JsValue,
         expression_filters: JsValue,
+        include_trashed: Option<bool>,
     ) -> Result<JsValue, JsError> {
         // Extra `(property, value)` AND constraints from JS. `null`/`undefined`
         // → none, keeping single-filter callers unchanged.
@@ -600,6 +602,10 @@ impl ClientDb {
             end_val: None,
             include_external: false,
             include_nested: include_resources.unwrap_or(false),
+            // Same rule as `construct_collection_from_params`: hide trashed
+            // items unless asked. The Trash-view exemption lives in
+            // `atomic_lib::trash::filter_for_query`, so it applies here too.
+            exclude_trashed: !include_trashed.unwrap_or(false),
             for_agent: atomic_lib::agents::ForAgent::Sudo,
             // `Subject::from` drops the base domain, leaving a localized drive
             // as an `External` subject that matches no stored drive prefix.
@@ -620,6 +626,7 @@ impl ClientDb {
         limit: Option<u32>,
         parents: JsValue,
         filters: JsValue,
+        include_trashed: Option<bool>,
     ) -> Result<JsValue, JsError> {
         let parents: Option<Vec<String>> = if parents.is_null() || parents.is_undefined() {
             None
@@ -632,6 +639,7 @@ impl ClientDb {
             limit,
             parents,
             filter_pairs: Some(js_to_filter_pairs(filters)),
+            include_trashed: include_trashed.unwrap_or(false),
             ..Default::default()
         };
         let hits = self.node.search(&query, &opts).map_err(to_js_err)?;
@@ -702,6 +710,81 @@ impl ClientDb {
             .map_err(to_js_err)?;
 
         Ok(done as u32)
+    }
+
+    /// Whether the atom indexes still have to be rebuilt for the current key
+    /// layout (`Db::index_migration_pending`). The worker runs
+    /// `migrateIndexKeysStep` until it is done before it serves anything.
+    #[wasm_bindgen(js_name = "indexMigrationPending")]
+    pub fn index_migration_pending(&self) -> Result<bool, JsError> {
+        self.db().index_migration_pending().map_err(to_js_err)
+    }
+
+    /// Rebuild the indexes for up to `limit` more resources. Returns
+    /// `{ "done": n, "total": n, "finished": bool }` as JSON.
+    #[wasm_bindgen(js_name = "migrateIndexKeysStep")]
+    pub fn migrate_index_keys_step(&self, limit: u32) -> Result<String, JsError> {
+        let step = self
+            .db()
+            .migrate_index_keys_step(limit as usize)
+            .map_err(to_js_err)?;
+        serde_json::to_string(&step).map_err(to_js_err)
+    }
+
+    /// Whether old chat `Message` resources may still have to be moved into
+    /// chat log pages (`Db::message_migration_pending`).
+    #[wasm_bindgen(js_name = "messageMigrationPending")]
+    pub fn message_migration_pending(&self) -> Result<bool, JsError> {
+        self.db().message_migration_pending().map_err(to_js_err)
+    }
+
+    /// Move the old messages of whole chats into pages, until about `limit`
+    /// messages are done. Returns `{ "done": n, "total": n, "finished": bool }`
+    /// as JSON. `local_only_drives_json` is a JSON array of the drives that
+    /// exist only in this store: pages are written for those alone. A drive a
+    /// server hosts gets its pages from the server; for those this only drops
+    /// cached `Message`s whose entry is already in a page it holds.
+    #[wasm_bindgen(js_name = "migrateMessagesStep")]
+    pub async fn migrate_messages_step(
+        &self,
+        limit: u32,
+        local_only_drives_json: &str,
+    ) -> Result<String, JsError> {
+        let drives: Vec<String> =
+            serde_json::from_str(local_only_drives_json).map_err(to_js_err)?;
+        let create_in = atomic_lib::db::chat_migration_drive_set(drives);
+        let step = self
+            .db()
+            .migrate_messages_step(limit as usize, Some(&create_in))
+            .await
+            .map_err(to_js_err)?;
+        serde_json::to_string(&step).map_err(to_js_err)
+    }
+
+    /// Whether old `ai-message` resources may still have to be moved into chat
+    /// log pages (`Db::ai_chat_migration_pending`).
+    #[wasm_bindgen(js_name = "aiChatMigrationPending")]
+    pub fn ai_chat_migration_pending(&self) -> Result<bool, JsError> {
+        self.db().ai_chat_migration_pending().map_err(to_js_err)
+    }
+
+    /// Like `migrateMessagesStep`, for the messages of AI chats
+    /// (`Db::migrate_ai_chats_step`).
+    #[wasm_bindgen(js_name = "migrateAiChatsStep")]
+    pub async fn migrate_ai_chats_step(
+        &self,
+        limit: u32,
+        local_only_drives_json: &str,
+    ) -> Result<String, JsError> {
+        let drives: Vec<String> =
+            serde_json::from_str(local_only_drives_json).map_err(to_js_err)?;
+        let create_in = atomic_lib::db::chat_migration_drive_set(drives);
+        let step = self
+            .db()
+            .migrate_ai_chats_step(limit as usize, Some(&create_in))
+            .await
+            .map_err(to_js_err)?;
+        serde_json::to_string(&step).map_err(to_js_err)
     }
 
     /// The retained signed envelopes of each subject, as
@@ -969,6 +1052,72 @@ impl QueryResponse {
 
 fn resource_to_json_ad(resource: &Resource, origin: &str) -> Result<String, JsError> {
     resource.to_json_ad(Some(origin)).map_err(to_js_err)
+}
+
+/// One cell of a row handed to `evaluateFormula`.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum CellValue {
+    Number(f64),
+    Bool(bool),
+    Text(String),
+}
+
+impl CellValue {
+    /// Same reading as a stored value: numbers as themselves, booleans as 1/0,
+    /// a numeric string as that number, a DATE string as midnight in the
+    /// caller's zone, any other ISO string as its instant.
+    fn as_number(&self, compiled: &atomic_lib::expression::Compiled) -> Option<f64> {
+        use atomic_lib::aggregate::value_as_number;
+        match self {
+            CellValue::Number(n) => Some(*n),
+            CellValue::Bool(b) => Some(f64::from(*b)),
+            CellValue::Text(s) => value_as_number(&Value::String(s.clone())).or_else(|| {
+                // `instant` shifts only a DATE; a full timestamp string stays put.
+                if s.len() == 10 {
+                    compiled.instant(&Value::Date(s.clone()))
+                } else {
+                    value_as_number(&Value::Date(s.clone()))
+                }
+            }),
+        }
+    }
+}
+
+/// Evaluate a computed-column expression (formula or legacy kind) against a
+/// row's current values, `{ [propertySubject]: number | string | boolean | null }`.
+/// `tz_offset_minutes` is the caller's zone, minutes east of UTC. Needs no
+/// `ClientDb`. Returns a number, or `null` when the row has no value.
+#[wasm_bindgen(js_name = "evaluateFormula")]
+pub fn evaluate_formula(
+    expression: JsValue,
+    values: JsValue,
+    now_ms: f64,
+    tz_offset_minutes: f64,
+) -> Result<JsValue, JsError> {
+    let expression: atomic_lib::expression::Expression =
+        serde_wasm_bindgen::from_value(expression).map_err(to_js_err)?;
+    let values: std::collections::HashMap<String, Option<CellValue>> =
+        serde_wasm_bindgen::from_value(values).map_err(to_js_err)?;
+    let Ok(compiled) = expression.compile(atomic_lib::expression::Clock {
+        now_ms: now_ms as i64,
+        tz_offset_minutes: tz_offset_minutes as i64,
+    }) else {
+        return Ok(JsValue::NULL);
+    };
+    let result =
+        compiled.evaluate(&|property| values.get(property)?.as_ref()?.as_number(&compiled));
+
+    Ok(result.map_or(JsValue::NULL, JsValue::from_f64))
+}
+
+/// The formula's error message, or `null` when it is valid.
+#[wasm_bindgen(js_name = "validateFormula")]
+pub fn validate_formula(expression: JsValue) -> Result<Option<String>, JsError> {
+    let expression: atomic_lib::expression::Expression =
+        serde_wasm_bindgen::from_value(expression).map_err(to_js_err)?;
+
+    Ok(expression.validate().err())
 }
 
 fn to_js_err(e: impl std::fmt::Display) -> JsError {
@@ -1341,6 +1490,36 @@ pub fn conversation_open(
         .collect())
 }
 
+/// Encrypts an attachment for `conversation` under a fresh random key.
+/// Returns `{ key, ciphertext }`: the base64url file key (to put inside the
+/// sealed message that references the file) and the bytes to upload.
+#[wasm_bindgen(js_name = "conversationSealFile")]
+pub fn conversation_seal_file(conversation: &str, plaintext: &[u8]) -> Result<JsValue, JsError> {
+    let (key, ciphertext) =
+        atomic_lib::conversation::seal_file(conversation, plaintext).map_err(to_js_err)?;
+    let sealed = js_sys::Object::new();
+    js_sys::Reflect::set(&sealed, &"key".into(), &JsValue::from_str(&key))
+        .map_err(|_| JsError::new("could not build the sealed file"))?;
+    js_sys::Reflect::set(
+        &sealed,
+        &"ciphertext".into(),
+        &js_sys::Uint8Array::from(ciphertext.as_slice()).into(),
+    )
+    .map_err(|_| JsError::new("could not build the sealed file"))?;
+    Ok(sealed.into())
+}
+
+/// Decrypts what `conversationSealFile` produced. Throws when the key is wrong,
+/// the bytes were altered, or the file belongs to another conversation.
+#[wasm_bindgen(js_name = "conversationOpenFile")]
+pub fn conversation_open_file(
+    conversation: &str,
+    key: &str,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, JsError> {
+    atomic_lib::conversation::open_file(conversation, key, ciphertext).map_err(to_js_err)
+}
+
 /// The proof must be a 64-byte Ed25519 signature.
 ///
 /// Not the private key: the browser's `CryptoProvider` exposes signing rather
@@ -1389,6 +1568,10 @@ impl ClientDb {
     /// segments predate the anchor; pass an empty object when it is unavailable
     /// and the anchor simply orders every segment after itself.
     ///
+    /// `current_state_only` makes a checkpoint carry each resource as a shallow
+    /// snapshot (current values, no edit history) and no signed envelopes.
+    /// It only matters when this pass is a checkpoint. Omit for the default.
+    ///
     /// The returned bytes are already encrypted: the control plane and the
     /// bucket only ever see ciphertext.
     #[wasm_bindgen(js_name = "vaultExport")]
@@ -1404,6 +1587,7 @@ impl ClientDb {
         checkpoint_n: u64,
         drive_has_checkpoint: bool,
         observed_lanes: JsValue,
+        current_state_only: Option<bool>,
     ) -> Result<JsValue, JsError> {
         let key = drive_key(key_bytes, key_epoch)?;
         let subject = Subject::from_raw(drive_subject, self.db().get_base_domain().as_deref());
@@ -1427,7 +1611,14 @@ impl ClientDb {
             checkpoint_n,
             drive_has_checkpoint,
             &observed,
-            CheckpointPolicy::default(),
+            CheckpointPolicy {
+                history: if current_state_only.unwrap_or(false) {
+                    HistoryKeep::CurrentStateOnly
+                } else {
+                    HistoryKeep::Full
+                },
+                ..CheckpointPolicy::default()
+            },
         )
         .await
         .map_err(to_js_err)?;

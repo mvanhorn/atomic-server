@@ -80,6 +80,7 @@ The current list (`protocol::CAPABILITIES`):
 | `rebind-on-auth` | Re-evaluates the connection's subscriptions against the new identity when an `AUTH` lands, dropping the ones it may no longer read. |
 | `sync-probe` | Reads the `probe` and `subjects` keys of a `SYNC (0x30)` JSON tail and answers a stale probe with `SYNC_RESEND (0x38)`. |
 | `ephemeral` | Reads and writes `EPHEMERAL (0x40)` over WebSocket for edits in progress, cursors and drive presence, in place of the `LORO_SYNC_UPDATE` / `LORO_EPHEMERAL_UPDATE` / `PRESENCE_UPDATE` text frames. |
+| `commit-pace` | Appends the node's write-load hint (`pace_ms`) to the slim `COMMIT_OK` of a client whose `HELLO` lists `commit-pace`, and may refuse a `COMMIT` with `BUSY (12)` when overloaded. See [Write load and pacing](#write-load-and-pacing). |
 | `get-many` | Answers `GET_MANY (0x15)`, a list of subjects, with one `GET_MANY_RESULT (0x16)` holding an `UPDATE` or `ERROR` entry per subject, so a client fetches a whole list in one round trip. |
 
 The list is **additive only**: a name is never renamed or reused once
@@ -92,7 +93,7 @@ too: the browser and `WsClient` send a `HELLO` on open, listing what they
 speak (`protocol::CLIENT_CAPABILITIES`, `CLIENT_CAPABILITIES` in `ws-v2.ts`).
 The server answers nothing (its own list rides on `AUTH_OK`); the list steers
 what that connection is sent from then on. The one name a responder acts on
-today is `commit-ok-slim`. A server that predates `client-hello` drops the
+today are `commit-ok-slim` and `commit-pace`. A server that predates `client-hello` drops the
 frame unread, and the client gets the pre-2026-09 behaviour.
 
 
@@ -116,7 +117,7 @@ logged and dropped, not answered.
 | `0x16` | `GET_MANY_RESULT` | responder | client only. |
 | `0x20` | `SUB` | client | WS handler only. **No engine arm**, so an Iroh peer cannot subscribe. |
 | `0x21` | `UNSUB` | client | WS handler only. **No engine arm.** |
-| `0x30` | `SYNC` | Iroh initiator; the browser, as a hash-only probe and then filtered to the differing subjects | engine (both transports) |
+| `0x30` | `SYNC` | Iroh initiator (probe first, with `sync-probe`); the browser, as a hash-only probe and then filtered to the differing subjects | engine (both transports) |
 | `0x31` | `SYNC_OK` | responder | client / initiator only |
 | `0x32` | `SYNC_DIFF` | responder | client / initiator only |
 | `0x33` | `SYNC_PUSH` | either | engine (both transports) |
@@ -124,10 +125,14 @@ logged and dropped, not answered.
 | `0x35` | `BLOB_RESPONSE` | either | engine (both transports) |
 | `0x36` | *reserved* | nobody | nobody. Previously `QUERY_UPDATE`; retired, never reuse. |
 | `0x37` | `HELLO` | both peers on an Iroh stream; a WebSocket client on open | Iroh handshake and live loop; the WS handler records the client's capabilities. The WS server never sends one (its capabilities ride on `AUTH_OK`). |
-| `0x38` | `SYNC_RESEND` | responder, answering a `SYNC` probe whose hash is stale | client only. Tells the client to send its full version-vector `SYNC`. |
+| `0x38` | `SYNC_RESEND` | responder, answering a `SYNC` probe whose hash is stale | client only (browser, Iroh initiator). Tells the client to send its full version-vector `SYNC`. |
 | `0x40` | `EPHEMERAL` | Iroh peers; WS client and server, both ways | Iroh live loop; WS handler (`require_auth`, then the broadcaster). The server relays between the two transports. |
 | `0x41` | `KEEPALIVE` | both sides, on their own schedule | WS server **echoes** it; Iroh **never** echoes it. |
 | `0x42` | `CHALLENGE` | WS server, as its first frame | client only. Never sent on an Iroh stream. |
+| `0x50` | `CALL` | Iroh dialer, after `AUTH` | `atomic_lib::sync::call`, answered by the server's host ABI. Iroh only; the WS server answers it with an `ERROR`. |
+| `0x51` | `CALL_RESULT` | Iroh responder | the dialer of the `CALL`. |
+| `0x52` | `INVITE` | Iroh dialer, after `AUTH` | `atomic_lib::sync::invite`. Iroh only; the WS server answers it with an `ERROR`. |
+| `0x53` | `INVITE_OK` | Iroh responder | the dialer of the `INVITE`. A refusal is an `ERROR` with code 13 (`INVITE_REFUSED`). |
 
 ## Frame layouts
 
@@ -147,6 +152,7 @@ the end of the frame.
 [0x13] [request_id: u16] [signed_commit_json_ad_utf8]    // COMMIT
 [0x14] [request_id: u16] [created_commit_json_ad_utf8]   // COMMIT_OK, full form
 [0x14] [request_id: u16] [commit_id_utf8]                 // COMMIT_OK, slim form (client HELLO lists commit-ok-slim)
+[0x14] [request_id: u16] [commit_id_utf8] 0x00 [pace_ms: decimal ascii]   // COMMIT_OK, paced slim form (client HELLO lists commit-ok-slim and commit-pace)
 [0x20] [drive_subject_utf8]                              // SUB
 [0x21] [drive_subject_utf8]                              // UNSUB
 [0x31] [drive_len: u16] [drive_utf8]                     // SYNC_OK
@@ -180,7 +186,7 @@ Flags: `0x01` `SNAPSHOT` (`loro_bytes` is a full Loro snapshot; clear means a
 delta), `0x02` `HAS_COMMIT_ID` (the two commit-id fields are present),
 `0x04` `PUSH` (a subscription-driven push, not a `GET` response).
 
-`commit_id` is the full `did:ad:commit:<signature>` DID, which the receiver
+`commit_id` is the full `atomic:commit:<signature>` DID, which the receiver
 stores as `lastCommit` and uses as `previousCommit` on its next write.
 
 ### SYNC (0x30)
@@ -275,6 +281,79 @@ decode so a peer cannot smuggle line breaks into logs. Display only:
 authorization uses the authenticated agent and the Iroh NodeId, never this. A
 decoder that predates capabilities ignores the trailing bytes.
 
+### CALL (0x50) and CALL_RESULT (0x51)
+
+```
+[0x50] [request_id: u16] [json]     // CALL
+[0x51] [request_id: u16] [json]     // CALL_RESULT
+```
+
+Run an app export (`atomic:host/calls`, see `docs/src/plugins/host-abi.md`) on
+the responding node. Iroh only. `CALL` is accepted after `AUTH` and only for
+the drive the `AUTH` was signed for, like `SYNC`; any other drive is answered
+as a `SYNC` for the wrong drive is.
+
+```json
+// CALL
+{ "drive": "did:ad:…", "interface": "atomic:example/counter@1",
+  "function": "increment", "args": "{\"subject\":\"…\"}",
+  "caller": "did:ad:agent:…", "depth": 1,
+  "budget": { "calls": 60, "fuel": 15000000000,
+              "effects": ["read"], "secrets": false } }
+// CALL_RESULT: exactly one of result and error
+{ "result": "{\"count\":1}", "callsLeft": 55, "fuelLeft": 14000000000 }
+{ "error": { "code": "forbidden", "message": "…" }, "callsLeft": 0, "fuelLeft": 0 }
+```
+
+`args` and `result` are JSON text, as in `calls.call`. `error.code` is one of
+the host ABI's stable codes. `budget` is what the whole call chain may still
+spend; `effects: null` is any effect. The responder never widens it: counts are
+capped at its own limits, an effect it does not know is dropped, and
+`secrets: false` stays false. `callsLeft` and `fuelLeft` hand back what was not
+spent. `depth` is the number of hops so far, this one included. A node answering
+a `CALL` does not forward it again.
+
+The `AUTH` on the stream is the dialing *node's* agent, as for a sync. `caller`
+is the agent the call is for: the node vouches for it, because the caller's own
+key never reaches it. The responder runs the call for `caller` (all the usual
+checks), and in addition needs the node's agent to be able to read the drive,
+and to write it wherever a hop writes. A `caller` of `sudo` or the public agent
+is refused.
+
+### INVITE (0x52) and INVITE_OK (0x53)
+
+```
+[0x52] [json {"token": "<base64 invite token>"}]              // INVITE
+[0x53] [json {"drive": "did:ad:…", "write": false}]           // INVITE_OK
+```
+
+Redeem an invite token (`generateInviteToken` of `@tomic/lib`, signed by the
+inviter) at a device of the inviter, without a server. Iroh only. The dialer
+finds the device the way it finds any device of a drive: the pkarr record of
+the token's target lists the Iroh node ids (`_atomic_nodes`). It sends `AUTH`
+for the token's target (`drive#nodeId`, as for a sync), which proves who the
+invitee is, and then `INVITE`. The frame is accepted from any authenticated
+agent, paired or not: the token is the authority, and `INVITE` for a drive other
+than the `AUTH`'s is refused like a `SYNC` for the wrong drive.
+
+The responder grants only when all of these hold, and otherwise answers
+`ERROR` with code 13 and a plain sentence as message (nothing is granted):
+
+- the token has not expired ("This invite has expired. Ask for a new one.");
+- the token's signer is the responder's **own** agent and the signature
+  verifies, because only then can this node sign the change as the inviter
+  ("This device did not make this invite, so it cannot accept it.");
+- that agent may still write the target in the responder's store.
+
+It then adds the invitee to the target's `read` list (and `write` for a write
+invite) in a commit signed by its agent, queues that commit for the inviter's
+servers and lets live peers carry it to the inviter's other devices, and
+answers `INVITE_OK`. The invitee then syncs the drive from the same device with
+an ordinary `SYNC`, which the sync policy admits because the invitee can now
+read. `max_usages` of the token is not counted: that needs state shared by all
+the inviter's devices. In the link form of the Flutter package this is
+`atomic:invite?token=<token>`; the web app does not parse that form yet.
+
 ### EPHEMERAL (0x40)
 
 ```
@@ -311,7 +390,7 @@ deserializer has no defaults):
 
 ```json
 {
-  "https://atomicdata.dev/properties/auth/agent": "did:ad:agent:<pubkey>",
+  "https://atomicdata.dev/properties/auth/agent": "atomic:agent:<pubkey>",
   "https://atomicdata.dev/properties/auth/requestedSubject": "<subject>",
   "https://atomicdata.dev/properties/auth/publicKey": "<base64 ed25519>",
   "https://atomicdata.dev/properties/auth/timestamp": 1756900000000,
@@ -440,14 +519,59 @@ Everything else is open to an anonymous socket and gated per subject by
 | `8` | `AUTH_FAILED` | An `AUTH` frame was refused. `request_id = 0`. |
 | `9` | `INVALID_SIGNATURE` | A `COMMIT` whose signature does not verify against its signer's key, or that has none. Terminal for that envelope: sign again. |
 | `10` | `IMMUTABLE_COMMIT` | The commit's subject is itself a Commit, which can never be edited. Terminal: drop the entry; nothing is lost. |
+| `11` | `CAUSALITY_CONFLICT` | A new Loro write lost against stored state. Keep the local edit; stop sending the same stale update until it is rebased. |
+| `12` | `BUSY` | The node is overloaded with writes, or the agent spent its write rate budget. Refused **before** any work; nothing landed. The message carries `retry_after_ms=<n>`. Not a failure: keep the edit, wait, send one merged delta, and do not retry over another transport. See [Write load and pacing](#write-load-and-pacing). |
 
-Codes `1` to `4`, `9` and `10` come from `classify_commit_error`, which pattern-matches the
+Codes `1` to `4` and `9` to `12` come from `classify_commit_error`, which pattern-matches the
 underlying error text where the frame is built. Many other engine failures
 are **not** classified and go out as `UNKNOWN` with a descriptive message: an
 invalid frame of any kind, `No state`, a failed `GET` lookup,
 `Blob not found`, `Unsolicited blob response`, `Drive not admitted for sync`.
 Treat an unrecognized code the same as `UNKNOWN` and fall back to the
 message.
+
+## Write load and pacing
+
+The cost of a commit on the node is per commit, not per edit: it rebuilds the
+resource's Loro document, rewrites the full snapshot and takes one write
+transaction on the single writer. Clients are local first (the edit is already
+saved on the device, peers see typing live over `EPHEMERAL`), so when the node
+is busy they can send fewer, fatter commits. The node tells them when.
+
+`POST /commit` and the WebSocket `COMMIT` frame share one counter of commits
+in flight (taken before the signature check, released when the commit is
+answered). Two limits, `--commit-soft-limit` (`ATOMIC_COMMIT_SOFT_LIMIT`,
+default 32) and `--commit-hard-limit` (`ATOMIC_COMMIT_HARD_LIMIT`, default 256,
+`0` switches the whole mechanism off):
+
+- **Soft signal, `pace_ms`.** With `n` commits in flight, `pace_ms` is `0`
+  for `n <= soft` and rises linearly to 10 000 at `n = hard`:
+  `10000 * (n - soft) / (hard - soft)`. It is the least time a client should
+  leave between two commits of one resource. A client that lists both
+  `commit-ok-slim` and `commit-pace` in its `HELLO` gets it on every
+  `COMMIT_OK`, appended to the commit id after a NUL byte as decimal ASCII
+  (`0` when there is no pressure, so the client can relax). Any other client
+  gets the existing `COMMIT_OK` forms, byte for byte. Over HTTP a successful
+  `POST /commit` carries the same number in the `X-Atomic-Pace-Ms` response
+  header.
+- **Hard signal, `BUSY`.** With more than `hard` commits in flight a new
+  `COMMIT` is refused up front with `ERROR` code `BUSY (12)` and the message
+  `Server busy; retry_after_ms=<n>`. Over HTTP the answer is `503` with
+  `Retry-After` (whole seconds, rounded up) and `X-Atomic-Retry-After-Ms`.
+  `n` is the time the node needs to drain its queue (in-flight commits times
+  a moving average of the commit service time), clamped to 250 ms to 10 s and
+  jittered by +-50% so refused clients do not return in one wave. An old
+  client sees an unknown code and retries generically.
+- **Rate limit.** The write rate limiter (`--write-rate-limit`) answers a
+  `COMMIT` with the same `BUSY`; the message is
+  `Too many writes; retry after <s> seconds (retry_after_ms=<s * 1000>)`.
+  Over HTTP it stays `429` with `Retry-After`. Before 2026-10 the WebSocket
+  frame carried code `UNKNOWN (0)` and the delay only in the text.
+
+A client that honours the hints keeps every edit and never drops one: it
+sends a resource at most once per `max(debounce, pace_ms)`, lets edits pile
+up into the next delta, and on `BUSY` waits `retry_after_ms` (plus its own
+jitter), counts no failure and does not fall back to HTTP.
 
 ## Resource fetching
 
@@ -466,7 +590,8 @@ genesis commit, which the responder rejects. A resource with no state answers
 `ERROR` `UNKNOWN` `No state`; an unreadable or missing subject answers
 `ERROR` `UNKNOWN` with the lookup error, on the same `request_id`.
 That `lastCommit` id is a receipt for genesis detection, not a refetchable
-resource.
+resource. It is derived when the state is sent (the id of the newest kept
+envelope) and is not stored in the resource's Loro document.
 
 A client that needs many subjects at once (a chat and every part of every
 message, say) sends one `GET_MANY` instead of one `GET` per subject, when
@@ -511,16 +636,18 @@ id instead, and resolves its caller with the commit it signed plus that id.
 The payload is the same signed JSON-AD body HTTP `POST /commit` accepts, so
 deterministic signing and commit parsing are unaffected by the transport.
 `created_commit_json_ad` is the created commit resource
-(`did:ad:commit:<sig>`) that `/commit` also returns. On failure the responder
+(`atomic:commit:<sig>`) that `/commit` also returns. On failure the responder
 answers `ERROR` with the matching `request_id` and a classified code. HTTP
 `POST /commit` remains the fallback path.
 
-**The echo carries the server's stamp.** The `UPDATE` a commit fans out is
+**The echo carries the server's own ops.** The `UPDATE` a commit fans out is
 not the commit's own bytes: it is every op the stored doc gained during the
-apply, which is the author's ops plus the `lastCommit` stamp the server
-writes afterwards under its own peer. Anyone who loads the stored snapshot
-builds their next edit on top of that stamp, so a subscriber without it parks
-that edit as pending and every later delta parks behind it. For the same
+apply, which is the author's ops plus whatever the server writes afterwards
+under its own peer (`createdAt` at genesis, a derived `drive`). Older servers
+also wrote a `lastCommit` stamp there on every commit; it is now derived and
+no longer part of the document. Anyone who loads the stored snapshot builds
+their next edit on top of those ops, so a subscriber without them parks that
+edit as pending and every later delta parks behind it. For the same
 reason the author's own connection receives the echo too; the client dedups
 it by commit id and imports it without notifying.
 
@@ -670,29 +797,45 @@ Same engine, binary handshake, no text frames:
 <- HELLO (0x37)                accept side introduces itself
 <- AUTH (0x01)                 accept side's auth-back (best effort)
 -> HELLO (0x37)
--> SYNC (0x30)                 drive + hash + full compacted VVs
+-> SYNC (0x30)                 probe: drive + hash, no VVs   (peer has `sync-probe`)
 <- SYNC_OK (0x31)              fast path, hashes match, done
    or
+<- SYNC_RESEND (0x38)          probe missed
+-> SYNC (0x30)                 drive + hash + full VVs (sparse with `sparse-sync`)
 <- SYNC_DIFF (0x32)
 <- SYNC_PUSH (0x33) × n        last chunk flagged LAST
 -> SYNC_PUSH (0x33) × n        the initiator's answer to `pull`
 ```
 
-The initiator sends the full `SYNC` state; there is no probe on this
-transport. If the `SYNC_DIFF` has an empty `push` list the initiator
+When the responder advertises `sync-probe`, the initiator first sends a
+hash-only probe (hash version 2 with `sparse-sync`, else version 1), so a drive
+that did not change costs one hash instead of its version vectors. The
+responder hashes what the identity it authenticated may read; the initiator
+hashes everything it holds, so a drive with subjects the responder may not
+show it misses the probe every time and falls back to the full `SYNC`, which is
+correct. On `SYNC_RESEND` the initiator sends the full `SYNC`, in the sparse
+encoding with hash version 2 when the responder advertises `sparse-sync` and
+otherwise the dense table with hash version 1 (one counter per resource per
+peer in the drive). A responder without `sync-probe` gets the full `SYNC`
+straight away. If the `SYNC_DIFF` has an empty `push` list the initiator
 sends its pushback immediately and stops reading, rather than waiting for
 `SYNC_PUSH` frames that will not come.
 
 Both sides then transition to live mode. On the accept side that happens once
-the bulk exchange completes, including the case of a `SYNC_DIFF` whose `pull`
-list is empty: without that check the accept side stays in handshake mode and
-later live `UPDATE` frames go to the sync engine, which has no arm for them.
+the bulk exchange completes: a probe answered with `SYNC_OK`, a `SYNC_DIFF`
+whose `pull` list is empty, or the initiator's `SYNC_PUSH`. A `SYNC_RESEND` is
+not the end of the exchange; the accept side keeps reading for the full `SYNC`.
+Without these checks the accept side stays in handshake mode and later live
+`UPDATE` frames go to the sync engine, which has no arm for them.
 
 Serving a peer's `pull` list is gated per subject on `check_read` for the
 identity the peer proved, exactly as the accept side's `SYNC_DIFF` is. Dialing
 a peer never establishes that peer's rights. A peer the local user
 deliberately paired with is additionally served whatever *this node* may
 read, never more.
+
+A stream authenticated for a drive may also carry `CALL` frames instead of (or
+after) the sync; see [CALL](#call-0x50-and-call_result-0x51).
 
 ## SYNC_PUSH chunking and acknowledgement
 
@@ -711,6 +854,20 @@ the **chunk, not its contents**: individual entries may still be skipped
 (tombstoned locally, unreadable, a failed Loro import). A sender that needs
 proof re-probes.
 
+The Rust receiver stages the admitted resources in each chunk, merges repeated
+subjects in wire order, and writes their projections, Loro snapshots and indexes
+in one transaction. Resources with `localId` participate in that batch too.
+Accepted signed envelopes are verified and retained individually using the
+normal history policy. After the `LAST` chunk, including an empty terminator, one explicit
+database flush makes preceding chunks and their envelopes durable before the
+final acknowledgement. Database startup is independent of this import work.
+
+An intermediate chunk acknowledgement is a receipt, not a completed-transfer
+durability guarantee. A storage or final-flush failure returns `SYNC_REJECTED`
+without acknowledging that chunk; earlier chunks or writes may already be
+present. The receiving replication client propagates these failures rather than
+reporting success. Periodic database flushing can still run independently.
+
 The Rust drive-replication client counts all chunk acknowledgements before
 re-probing. On a WebSocket peer advertising `keepalive`, it then sends a
 `KEEPALIVE` and reads through the echo to drain blob requests queued after
@@ -723,8 +880,8 @@ sets the replication result's `in_sync` flag.
 A push refused **as a whole** is answered with `ERROR`, `request_id = 0`,
 code `SYNC_REJECTED (6)`, message
 `SYNC_PUSH rejected for drive <drive>: <reason>`, and **no `SYNC_OK`**.
-Nothing from it landed. The two reasons are that the sending agent has no
-write right on the drive, or that the node's sync policy does not admit it
+Admission rejection occurs before importing the chunk. The two reasons are that
+the sending agent has no write right on the drive, or that the node's sync policy does not admit it
 (not enrolled, or over quota). A drive that does not exist locally yet may be
 enrolled on the spot if the policy allows it, which is what keeps ordinary
 first sync working on an open node.
@@ -969,11 +1126,11 @@ step when you touch any of them.
 | `server/src/serve.rs` | Relays Iroh `EPHEMERAL` into the commit monitor so local WebSocket subscribers see peer presence. |
 | `browser/lib/src/ws-v2.ts` | Frame encode and decode. |
 | `browser/lib/src/websockets.ts` | The browser client: auth, pending requests, subscriptions, commit over WS, liveness, drive reconcile. |
-| `flutter/rust/src/api/simple/ws_sync.rs` | The Flutter FRB bridge over `WsClient`. |
+| `packages/atomic_store_flutter/rust/src/api/simple/ws_sync.rs` | The Flutter FRB bridge over `WsClient`. |
 
 ## Known gaps
 
-Tracked in [`planning/unified-sync.md`](https://github.com/atomicdata-dev/atomic-server/blob/master/planning/unified-sync.md),
+Tracked in [`planning/unified-sync.md`](https://github.com/ontola/atomic-server/blob/master/planning/unified-sync.md),
 "Remaining work".
 
 - **`SUB` / `UNSUB` are engine-owned.** Parse and `check_read` live in
@@ -991,6 +1148,13 @@ Tracked in [`planning/unified-sync.md`](https://github.com/atomicdata-dev/atomic
 - **Loro sync and presence subscriptions are not re-bound on `AUTH`.** The
   commit monitor's resource and drive maps are; the Loro-ephemera and
   presence maps on the same actor still check identity once, at registration.
+
+## Changed in 2026-10
+
+- **`commit-pace` and `BUSY (12)`.** Write-load signalling, see
+  [Write load and pacing](#write-load-and-pacing). The WebSocket rate-limit
+  refusal is now `BUSY` instead of `UNKNOWN`; the message text is unchanged
+  up to a `(retry_after_ms=...)` suffix.
 
 ## Changed in 2026-09
 

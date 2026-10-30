@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use actix_web::{http::header, web, HttpResponse};
 use atomic_lib::{
     db::plugin_meta::PluginMetaKey, hierarchy::check_read, urls, Storelike, Subject, Value,
@@ -8,9 +6,8 @@ use base64::{engine::general_purpose, Engine as _};
 
 use crate::{
     appstate::AppState,
-    context::RequestContext,
     errors::{AtomicServerError, AtomicServerResult},
-    helpers::get_client_agent,
+    helpers::get_client_agent_for_signed_url,
 };
 
 #[derive(serde::Deserialize, Debug)]
@@ -61,8 +58,7 @@ pub async fn handle_mint_view_token(
 ) -> AtomicServerResult<HttpResponse> {
     // Raw bytes rather than `web::Json`, so a version 2 request signature can
     // cover exactly the body acted on.
-    let body: MintTokenBody = serde_json::from_slice(&raw)
-        .map_err(|e| AtomicServerError::bad_request(format!("Invalid JSON body: {e}")))?;
+    let body: MintTokenBody = crate::helpers::parse_json(&raw)?;
     if !is_subject(&body.plugin) {
         return Err(AtomicServerError::bad_request(
             "Only a plugin stored in the drive needs a token",
@@ -72,18 +68,7 @@ pub async fn handle_mint_view_token(
     let store = &appstate.store;
     let resource = store.get_resource(&body.plugin.as_str().into()).await?;
 
-    let path_and_query = req
-        .head()
-        .uri
-        .path_and_query()
-        .ok_or("Path must be given")?
-        .to_string();
-    let signed_subject =
-        atomic_lib::Subject::from_raw(&path_and_query, None).resolve(&context.origin);
-
-    let agent =
-        crate::helpers::get_client_agent_for_request(&req, &raw, &appstate, &signed_subject)
-            .await?;
+    let agent = crate::helpers::authenticate(&req, &appstate, &context, &raw).await?;
     check_read(store, &resource, &agent).await?;
 
     let now = atomic_lib::utils::now();
@@ -125,32 +110,23 @@ fn split_plugin_name(plugin: &str) -> AtomicServerResult<(&str, &str)> {
     Ok((namespace, name))
 }
 
-pub fn get_plugin_file_path(
+/// A file of the release an Installation pins (`ui.js`, `ui.css`), read from
+/// its package.
+async fn release_file(
     appstate: &AppState,
-    drive_subject: &str,
-    plugin_name: &str,
+    installation: &atomic_lib::Resource,
     format: &str,
-) -> AtomicServerResult<PathBuf> {
-    split_plugin_name(plugin_name)?;
-    let encoded_drive = general_purpose::URL_SAFE.encode(drive_subject);
-
-    let plugin_dir = appstate
-        .config
-        .plugin_path
-        .join("class-extenders")
-        .join("scoped")
-        .join(encoded_drive);
-
-    let extension = match format {
-        "js" => "js",
-        "css" => "css",
-        _ => return Err("Invalid format".into()),
+) -> AtomicServerResult<Option<Vec<u8>>> {
+    if !matches!(format, "js" | "css") {
+        return Err("Invalid format".into());
+    }
+    let Ok(Value::String(release_id)) = installation.get(urls::RELEASE_ID) else {
+        return Ok(None);
     };
-
-    let file_name = format!("{}.ui.{}", plugin_name, extension);
-    let file_path = plugin_dir.join(file_name);
-
-    Ok(file_path)
+    Ok(
+        crate::plugins::release::package_file(&appstate.store, release_id, &format!("ui.{format}"))
+            .await?,
+    )
 }
 
 /// Generates a random CSP nonce for the plugin iframe document.
@@ -380,11 +356,7 @@ pub async fn handle_plugin_ui(
     if format == "html" {
         let nonce = plugin_nonce();
         let body = render_plugin_ui_html(&nonce);
-        let csp = format!(
-            "sandbox allow-scripts allow-downloads allow-pointer-lock allow-presentation; \
-             default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; \
-             img-src * data:; connect-src *; font-src *; base-uri 'none'; object-src 'none';"
-        );
+        let csp = frame_csp(&nonce);
 
         return Ok(HttpResponse::Ok()
             .content_type("text/html; charset=utf-8")
@@ -396,9 +368,7 @@ pub async fn handle_plugin_ui(
     // as the same agent that fetches the page — signed headers or the
     // session cookie, like any other handler.
     let store = &appstate.store;
-    let origin = RequestContext::new(&req, &appstate).origin;
-    let full_url = format!("{}{}", origin, req.uri());
-    let for_agent = get_client_agent(req.headers(), &appstate, &full_url).await?;
+    let for_agent = get_client_agent_for_signed_url(&req, &appstate).await?;
     let Some(meta) = store.get_plugin_meta(&PluginMetaKey::new(drive_subject, namespace, name))?
     else {
         return Ok(HttpResponse::NotFound().body("Plugin UI file not found"));
@@ -408,16 +378,10 @@ pub async fn handle_plugin_ui(
         .await?;
     atomic_lib::hierarchy::check_read(store, &plugin_resource, &for_agent).await?;
 
-    let file_path = get_plugin_file_path(&appstate, drive_subject, plugin_name, format)?;
-
-    if !file_path.exists() {
-        // No path in the body: the plugin directory layout is not the
-        // caller's business.
+    // No path in the body: the plugin's layout is not the caller's business.
+    let Some(content) = release_file(&appstate, &plugin_resource, format).await? else {
         return Ok(HttpResponse::NotFound().body("Plugin UI file not found"));
-    }
-
-    let content = std::fs::read_to_string(&file_path)
-        .map_err(|e| format!("Failed to read plugin UI file: {}", e))?;
+    };
 
     let content_type = match format.as_str() {
         "js" => "application/javascript",
@@ -429,6 +393,21 @@ pub async fn handle_plugin_ui(
         .content_type(content_type)
         .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
         .body(content))
+}
+
+/// The CSP of every plugin and app frame. A frame holds drive data, so it may
+/// not send it anywhere: `connect-src 'none'`, and images and fonts only from
+/// this server and `data:` (plus `blob:` images): a remote URL can carry data
+/// in its query. The one legitimate request, to the integration proxy, is made by
+/// the host (`proxyFetch`). A frame can still navigate itself to another URL;
+/// no CSP directive stops that, see `planning/host-abi.md`. `allow-modals`
+/// mirrors the iframe's own `sandbox` attribute; the CSP can only narrow it.
+fn frame_csp(nonce: &str) -> String {
+    format!(
+        "sandbox allow-scripts allow-modals allow-downloads allow-pointer-lock allow-presentation; \
+         default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; \
+         img-src 'self' data: blob:; connect-src 'none'; font-src 'self' data:; base-uri 'none'; object-src 'none';"
+    )
 }
 
 /// Serves a plugin whose source is a property on a resource.
@@ -451,10 +430,7 @@ async fn serve_drive_plugin(
         // No stylesheet: a plugin in the drive is one module. Its styles belong
         // in it, next to the markup they describe.
         let body = render_drive_plugin_ui_html_with(query_string, false, &nonce, true);
-        let csp = format!(
-            "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; \
-             img-src * data:; connect-src *; font-src *; base-uri 'none'; object-src 'none';"
-        );
+        let csp = frame_csp(&nonce);
 
         return Ok(HttpResponse::Ok()
             .content_type("text/html; charset=utf-8")
@@ -536,9 +512,7 @@ pub async fn handle_plugin_list(
     let store = &appstate.store;
     let drive_subject = &query.drive;
 
-    let origin = RequestContext::new(&req, &appstate).origin;
-    let full_url = format!("{}{}", origin, req.uri());
-    let for_agent = get_client_agent(req.headers(), &appstate, &full_url).await?;
+    let for_agent = get_client_agent_for_signed_url(&req, &appstate).await?;
 
     let plugins = store.get_class_extenders_on_drive(drive_subject);
     let mut plugin_list: Vec<UIPluginListItem> = vec![];
@@ -568,8 +542,6 @@ pub async fn handle_plugin_list(
         };
 
         let plugin_name = format!("{}.{}", namespace, name);
-        let js_file_path = get_plugin_file_path(&appstate, drive_subject, &plugin_name, "js")?;
-        let css_file_path = get_plugin_file_path(&appstate, drive_subject, &plugin_name, "css")?;
 
         let Some(meta) =
             store.get_plugin_meta(&PluginMetaKey::new(drive_subject, namespace, name))?
@@ -578,7 +550,7 @@ pub async fn handle_plugin_list(
             continue;
         };
 
-        if !js_file_path.exists() {
+        if release_file(&appstate, &resource, "js").await?.is_none() {
             continue;
         }
 
@@ -586,7 +558,7 @@ pub async fn handle_plugin_list(
             plugin: plugin_name,
             classes: plugin.classes,
             ui_manifest: PluginUIManifest {
-                css: css_file_path.exists(),
+                css: release_file(&appstate, &resource, "css").await?.is_some(),
             },
             resource: meta.subject,
         });
@@ -598,6 +570,19 @@ pub async fn handle_plugin_list(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A frame can read drive data, so it must have no way to send it out.
+    #[test]
+    fn frame_csp_forbids_network_and_sandboxes() {
+        let csp = frame_csp("n0nce");
+
+        assert!(csp.contains("connect-src 'none'"));
+        assert!(!csp.contains("connect-src *"));
+        assert!(csp.contains("img-src 'self' data: blob:;"));
+        assert!(csp.contains("font-src 'self' data:;"));
+        assert!(csp.starts_with("sandbox allow-scripts "));
+        assert!(csp.contains("script-src 'nonce-n0nce'"));
+    }
 
     /// An app's frame is null-origin, so its console is reachable by nobody:
     /// whatever it prints there, the person who could fix the app never sees.

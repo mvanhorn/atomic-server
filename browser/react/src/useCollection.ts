@@ -56,6 +56,27 @@ export type UseCollectionOptions = {
   preferServer?: boolean;
 };
 
+/**
+ * The last collection that finished loading, per store and query. A table (or
+ * any list) that remounts, on back/forward say, starts from what it showed
+ * last time instead of an empty collection that fills in a moment later. The
+ * fresh collection still loads in the background and replaces it.
+ */
+const lastReadyCollections = new WeakMap<Store, Map<string, Collection>>();
+const MAX_REMEMBERED_QUERIES = 40;
+
+const rememberReady = (store: Store, identity: string, col: Collection) => {
+  const remembered = lastReadyCollections.get(store) ?? new Map();
+  remembered.delete(identity);
+  remembered.set(identity, col);
+
+  while (remembered.size > MAX_REMEMBERED_QUERIES) {
+    remembered.delete(remembered.keys().next().value as string);
+  }
+
+  lastReadyCollections.set(store, remembered);
+};
+
 /** Stable key for the aggregation config, used as a rebuild dep. */
 const aggregationKey = (aggregation: QueryFilter['aggregation']): string =>
   aggregation?.aggregates.length ? JSON.stringify(aggregation) : '';
@@ -127,8 +148,28 @@ export function useCollection(
   // array literal directly — see `filtersKey`).
   const filtersDep = filtersKey(queryFilterMemo.filters);
 
+  const queryIdentity = [
+    queryFilterMemo.property,
+    queryFilterMemo.value,
+    queryFilterMemo.drive,
+    filtersDep,
+    queryFilterMemo.sort_by,
+    String(!!queryFilterMemo.sort_desc),
+    aggregationKey(queryFilterMemo.aggregation),
+    expressionFiltersKey(queryFilterMemo.expression_filters),
+    String(pageSize),
+    server ?? '',
+    String(includeNested),
+  ].join('\0');
+
   // Build collection once, reuse on remount. Only rebuild when query params change.
+  // The collection that is being (re)built lives in the ref; the one on screen
+  // is state. They differ only while a remembered result is shown during the
+  // background reload.
   const collectionRef = useRef<Collection | null>(null);
+  const [remembered] = useState(() =>
+    lastReadyCollections.get(store)?.get(queryIdentity),
+  );
   const [collection, setCollection] = useState(() => {
     const col = buildCollection(
       store,
@@ -140,26 +181,15 @@ export function useCollection(
     );
     collectionRef.current = col.__internalObject;
 
-    return col;
+    return remembered ? proxyCollection(remembered) : col;
   });
-  const [ready, setReady] = useState(false);
-  // Reset `ready` during render when the query changes (not in the effect).
+  // `ready` resets during render when the query changes (not in the effect).
   // The grid renders `aria-busy={!ready}`; keeping the previous collection's
   // ready=true while the new fetch is in flight made tests (and AT) treat a
   // still-loading table as settled. Same-render reset also avoids
-  // `react/set-state-in-effect`.
-  const queryIdentity = [
-    queryFilterMemo.property,
-    queryFilterMemo.value,
-    filtersDep,
-    queryFilterMemo.sort_by,
-    String(!!queryFilterMemo.sort_desc),
-    aggregationKey(queryFilterMemo.aggregation),
-    expressionFiltersKey(queryFilterMemo.expression_filters),
-    String(pageSize),
-    server ?? '',
-    String(includeNested),
-  ].join('\0');
+  // `react/set-state-in-effect`. A remembered result counts as ready: it has
+  // rows to show.
+  const [ready, setReady] = useState(!!remembered);
   const [readyFor, setReadyFor] = useState(queryIdentity);
 
   if (readyFor !== queryIdentity) {
@@ -191,6 +221,7 @@ export function useCollection(
       !col ||
       col.property !== queryFilterMemo.property ||
       col.value !== queryFilterMemo.value ||
+      col.drive !== queryFilterMemo.drive ||
       filtersKey(col.filters) !== filtersKey(queryFilterMemo.filters) ||
       col.sortBy !== queryFilterMemo.sort_by ||
       col.sortDesc !== !!queryFilterMemo.sort_desc ||
@@ -218,6 +249,7 @@ export function useCollection(
     col.waitForReady().then(() => {
       if (cancelled) return;
 
+      rememberReady(store, queryIdentity, col!);
       setCollection(proxyCollection(col!));
       setReady(true);
     });
@@ -225,10 +257,24 @@ export function useCollection(
     return () => {
       cancelled = true;
     };
-  }, [queryFilterMemo, pageSize, store, server, includeNested, preferServer]);
+  }, [
+    queryFilterMemo,
+    queryIdentity,
+    pageSize,
+    store,
+    server,
+    includeNested,
+    preferServer,
+  ]);
 
   const invalidateCollection = useCallback(async () => {
-    const target = collection.__internalObject;
+    // Refresh the collection that is being loaded, not the one on screen. They
+    // differ while a remembered result is shown during the background reload;
+    // refreshing the remembered one would drop the change on the floor and the
+    // fresh collection would settle on a snapshot from before it.
+    const target = collectionRef.current;
+    if (!target) return;
+
     await target.refresh();
 
     // Stale-write guard: a filter swap between when we kicked the
@@ -240,7 +286,7 @@ export function useCollection(
     if (collectionRef.current === target) {
       setCollection(proxyCollection(target));
     }
-  }, [collection.__internalObject]);
+  }, []);
 
   // Live-membership bridge. Each store-level resource change runs through
   // `applyResourceChange`, which either:

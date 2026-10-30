@@ -21,6 +21,7 @@ pub mod host_mode;
 mod https;
 pub mod invite_token;
 mod jsonerrors;
+pub mod mcp;
 mod metrics;
 pub mod node_key;
 pub mod plugins;
@@ -28,6 +29,7 @@ pub mod rate_limit;
 pub mod routes;
 pub mod serve;
 pub mod vector_search;
+pub mod write_load;
 // #[cfg(feature = "search")]
 #[cfg(test)]
 mod tests;

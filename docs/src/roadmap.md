@@ -40,7 +40,7 @@ This should help you understand how and where you may be able to contribute.
 - **[@tomic/svelte](https://github.com/atomicdata-dev/atomic-svelte)** (2022-12). Library for integrating Atomic Data with Svelte(Kit).
 - **[Atomic Tables](https://github.com/atomicdata-dev/atomic-data-browser/issues/25)** (2023-09). A powerful table editor with keyboard / copy / paste / sort support that makes it easier to model and edit data.
 - **Ontology Editor** (2023-10). Easily create & edit Classes, Properties and Ontologies.
-- **Local-First & did:ad Schema** (2026-06). Transitioned to a Local-First architecture using the `did:ad` schema. Instead of relying on a hosted HTTP origin, resources resolve over Mainline DHT. Agents are decentralized, relying solely on an Ed25519 private key.
+- **Local-First & did:ad Schema** (2026-06). Transitioned to a Local-First architecture using the `did:ad` schema. Instead of relying on a hosted HTTP origin, resources are found through peer discovery (pkarr relay and Iroh). Agents are decentralized, relying solely on an Ed25519 private key.
 - **Collaborative Sync with Loro CRDT** (2026-06). Integrated Loro CRDTs for collaborative real-time sync across devices, making documents conflict-free.
 - **Drafts and Suggestions** (2026-07). Added CMS publishing, drafts, and user suggestions as a clean, fork-based squash-merge mechanism.
 - **Meetings & Follow-Me Tours** (2026-07). Shipped purpose-built meeting workspaces, collaborative live meeting notes, and follower follow-along live tours.
@@ -58,5 +58,5 @@ We are working on polishing the developer experience (SDKs/APIs), expanding offl
 - **Passkey + PRF integration** (2026). Derive the encryption key directly from WebAuthn, making "sign in with passkey" a true one-step account restore.
 - **Cross-Agent Suggestions / Distributor Mode** (2026). Enabling users to suggest edits to other agents' drives via direct mesh channels.
 - **Multi-user P2P Presence** (2026). Ephemeral cursors and awareness syncing device-to-device directly over Iroh without a central hub.
-- **Published SDK packages** (2026). Ship the WASM client database as an npm package and the Dart SDK on pub.dev, so a local-first app is an install away instead of a checkout. See `planning/dart-sdk-package.md`.
+- **Published SDK packages** (2026). Ship the WASM client database as an npm package and the Dart SDK on pub.dev, so a local-first app is an install away instead of a checkout.
 - **1.0 release** (tbd). Mark the specification, the server, and the browser as *stable*.

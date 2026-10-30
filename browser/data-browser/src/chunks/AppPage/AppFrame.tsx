@@ -1,4 +1,4 @@
-import { isViewRequest } from '@tomic/plugin';
+import { HostError, isViewRequest } from '@tomic/plugin';
 import { viewSession } from '@helpers/extensions/viewSession';
 import { useEffect, useRef, useState } from 'react';
 import { styled } from 'styled-components';
@@ -25,7 +25,10 @@ import { newContextItem, useAISidebar } from '@components/AI/AISidebarContext';
 import type { AIAtomicResourceMessageContext } from '@chunks/AI/types';
 
 import resetCss from '../../reset.css?raw';
-import { useCreateThemeVars } from '@views/PluginView/useCreateThemeVars';
+import {
+  useCreateThemeVars,
+  useFrameColorScheme,
+} from '@views/PluginView/useCreateThemeVars';
 import { getIntegrationProxy } from '@helpers/integrationProxy';
 import {
   isPlatformId,
@@ -113,6 +116,7 @@ function AppFrameSession({
     table,
   });
   const { handle: handleUI, forwardKey } = hostUI;
+  const colorScheme = useFrameColorScheme();
 
   // Which plugin renders it. Resolved here rather than by each caller: a
   // table tab and an app page both need it, and two copies would drift.
@@ -283,8 +287,8 @@ function AppFrameSession({
   }, [store, app, drive, table, src, handleUI, forwardKey]);
 
   useEffect(() => {
-    bridgeRef.current?.setStyle(`${resetCss}\n${stylesheet}`);
-  }, [stylesheet, src]);
+    bridgeRef.current?.setStyle(`${resetCss}\n${stylesheet}`, colorScheme);
+  }, [stylesheet, colorScheme, src]);
 
   // The app never got as far as running: no token, no entry point, no source.
   // Reported as a failure like any other, so a caller waiting on an outcome
@@ -463,7 +467,11 @@ async function answer(
       ),
     });
   } catch (e) {
-    post({ id: request.id, error: (e as Error).message });
+    post({
+      id: request.id,
+      error: (e as Error).message,
+      ...(e instanceof HostError ? { code: e.code } : {}),
+    });
   }
 }
 
@@ -570,11 +578,17 @@ async function mintViewToken(
   const url = `${store.getServerUrl()}/plugin-view-token`;
 
   try {
-    const headers = await signRequest(url, agent, {});
+    const payload = JSON.stringify({ drive, plugin });
+    const headers = await signRequest(
+      url,
+      agent,
+      {},
+      { method: 'POST', body: payload },
+    );
     const response = await fetch(url, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ drive, plugin }),
+      body: payload,
     });
 
     if (!response.ok) {

@@ -1,7 +1,13 @@
 import { PeerInvitePage } from '../views/PeerInvitePage';
-import { createRoute } from '@tanstack/react-router';
-import { useServerURL, useResource, useStore } from '@tomic/react';
-import { useEffect, useState } from 'react';
+import { createRoute, useNavigate } from '@tanstack/react-router';
+import { server, useServerURL, useResource, useStore } from '@tomic/react';
+import { useEffect, useState, type JSX } from 'react';
+import {
+  alreadyHasInviteAccess,
+  readInviteGrant,
+} from '../helpers/inviteAccess';
+import { useSettings } from '../helpers/AppSettings';
+import { constructOpenURL } from '../helpers/navigation';
 import { isDev } from '../config';
 import { inviteNodeCandidates, pickInviteNode } from '../helpers/inviteNode';
 import {
@@ -9,6 +15,7 @@ import {
   originMayLackNode,
   probeOriginForNode,
 } from '../helpers/originNode';
+import { Spinner } from '../components/Spinner';
 import InvitePage from '../views/InvitePage';
 import { appRoute } from './RootRoutes';
 import { pathNames } from './paths';
@@ -43,9 +50,87 @@ function InviteRouteComponent() {
   }
 
   if (invalid) return <p>Invalid invitation.</p>;
-  if (browserInvite) return <PeerInvitePage token={token} />;
 
-  return <NodeInvite token={token} />;
+  return (
+    <OpenIfAlreadyShared token={token} browserInvite={browserInvite}>
+      {browserInvite ? (
+        <PeerInvitePage token={token} />
+      ) : (
+        <NodeInvite token={token} />
+      )}
+    </OpenIfAlreadyShared>
+  );
+}
+
+/**
+ * Someone who already has what the invite grants (they made the link, or the
+ * resource is already shared with them) goes straight to it: there is nothing
+ * to accept, and on a host with no node the invite could not be resolved
+ * anyway. Everyone else gets the invite screen.
+ */
+function OpenIfAlreadyShared({
+  token,
+  browserInvite,
+  children,
+}: {
+  token: string;
+  browserInvite: boolean;
+  children: JSX.Element;
+}) {
+  const store = useStore();
+  const navigate = useNavigate();
+  const { agent, setDrive } = useSettings();
+  const agentSubject = agent?.subject;
+  const [grant] = useState(() => readInviteGrant(token));
+  const [checked, setChecked] = useState(!agentSubject || !grant);
+
+  useEffect(() => {
+    if (!agentSubject || !grant) return;
+
+    let active = true;
+
+    void (async () => {
+      // A browser invite's drive syncs over a peer link that only the join
+      // screen creates, so only a copy already on this device skips it.
+      const hasLocalCopy = browserInvite
+        ? async (subject: string) => {
+            const db = store.getClientDb();
+
+            return (
+              !!db && !!(await db.getResourceWithSnapshot(subject)).snapshot
+            );
+          }
+        : undefined;
+      const has = await alreadyHasInviteAccess(
+        store,
+        agentSubject,
+        grant,
+        undefined,
+        { hasLocalCopy },
+      );
+      if (!active) return;
+
+      if (!has) {
+        setChecked(true);
+
+        return;
+      }
+
+      // A shared drive becomes the active one, as accepting would make it.
+      const target = await store.getResource(grant.target).catch(() => {});
+      if (!active) return;
+      if (target?.hasClasses(server.classes.drive)) setDrive(grant.target);
+      navigate({ to: constructOpenURL(grant.target), replace: true });
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [grant, agentSubject, store, navigate, setDrive, browserInvite]);
+
+  if (!checked) return <Spinner centered />;
+
+  return children;
 }
 
 /**
@@ -96,7 +181,7 @@ function NodeInvite({ token }: { token: string }) {
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- `candidatesKey` stands for `candidates`
   }, [candidatesKey, store, setServerUrl]);
 
-  if (node === undefined) return <p>Opening invitation...</p>;
+  if (node === undefined) return <Spinner centered />;
 
   if (node === null || isOriginWithoutNode(node)) {
     return (

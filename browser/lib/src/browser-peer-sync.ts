@@ -67,6 +67,9 @@ export async function browserPeerId(
   return prefix + randomPeerToken().slice(BROWSER_PREFIX_LENGTH);
 }
 
+/** How long a connection must stay ready before its retry backoff resets. */
+const STABLE_CONNECTION_MS = 30_000;
+
 /** A bounded full mesh: each remote browser has its own authenticated session.
  * Received frames are never rebroadcast; reconciliation catches up persisted state. */
 export class BrowserPeerSync {
@@ -75,8 +78,10 @@ export class BrowserPeerSync {
   private readonly members = new Set<string>();
   private readonly retries = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retryDelays = new Map<string, number>();
+  private readonly readyAt = new Map<string, number>();
   private reconnect?: ReturnType<typeof setTimeout>;
   private stopped = false;
+  private lastError = '';
   private iceServers: RTCIceServer[] = [];
   private peerId = randomPeerToken();
   private identity?: Promise<string>;
@@ -113,6 +118,7 @@ export class BrowserPeerSync {
     for (const timer of this.retries.values()) clearTimeout(timer);
     this.retries.clear();
     this.retryDelays.clear();
+    this.readyAt.clear();
     for (const connection of this.connections.values()) connection.close();
     this.connections.clear();
     // Closing during the handshake emits a browser network warning. The open
@@ -122,16 +128,26 @@ export class BrowserPeerSync {
   }
 
   private status(): void {
-    const ready = [...this.connections.values()].filter(
-      connection => connection.ready,
-    );
-    const relayed = ready.filter(
-      connection => connection.path === 'relayed',
-    ).length;
+    // Several tabs of one remote browser share an id prefix and each has its
+    // own connection; count the browsers, not the connections.
+    const browsers = new Map<string, boolean>();
+
+    for (const [id, connection] of this.connections) {
+      if (!connection.ready) continue;
+      const prefix = id.slice(0, BROWSER_PREFIX_LENGTH);
+      browsers.set(
+        prefix,
+        (browsers.get(prefix) ?? true) && connection.path === 'relayed',
+      );
+    }
+
+    const relayed = [...browsers.values()].filter(Boolean).length;
     this.options.onStatus?.(
-      ready.length
-        ? `Connected to ${ready.length} ${ready.length === 1 ? 'browser' : 'browsers'}${relayed ? ` (${relayed} relayed)` : ''}`
-        : 'Waiting for a peer',
+      browsers.size
+        ? `Connected to ${browsers.size} ${browsers.size === 1 ? 'browser' : 'browsers'}${relayed ? ` (${relayed} relayed)` : ''}`
+        : this.lastError
+          ? `Waiting for a peer (last attempt failed: ${this.lastError.slice(0, 120)})`
+          : 'Waiting for a peer',
     );
   }
 
@@ -291,7 +307,8 @@ export class BrowserPeerSync {
       this.db,
       { ...this.options, onStatus: undefined, iceServers: this.iceServers },
       () => {
-        this.retryDelays.delete(id);
+        this.readyAt.set(id, Date.now());
+        this.lastError = '';
         this.status();
       },
       error => this.failed(id, connection, error),
@@ -304,6 +321,12 @@ export class BrowserPeerSync {
   private remove(id: string, connection: BrowserPeerConnection): void {
     if (this.connections.get(id) !== connection) return;
     this.connections.delete(id);
+    // Only a connection that stayed up resets the backoff; one that
+    // authenticates and dies within seconds keeps backing off.
+    const since = this.readyAt.get(id);
+    this.readyAt.delete(id);
+    if (since !== undefined && Date.now() - since >= STABLE_CONNECTION_MS)
+      this.retryDelays.delete(id);
     connection.close();
     this.status();
   }
@@ -314,10 +337,11 @@ export class BrowserPeerSync {
     error: unknown,
   ): void {
     if (this.stopped || this.connections.get(id) !== connection) return;
+    const message = error instanceof Error ? error.message : String(error);
+    // Kept so the next status() does not wipe it with a bare "Waiting".
+    this.lastError = message;
     this.remove(id, connection);
-    this.options.onStatus?.(
-      error instanceof Error ? error.message : String(error),
-    );
+    this.options.onStatus?.(message);
 
     if (this.members.has(id) && id > this.peerId && !this.retries.has(id)) {
       const delay = this.retryDelays.get(id) ?? 3000;
@@ -424,6 +448,9 @@ class BrowserPeerConnection {
           const auth = await createAuthentication(
             `${this.options.drive}#${remoteChallenge}`,
             this.agent!,
+            // Not the did:ad: spelling servers get: this session compares the
+            // agent to the invite's issuer and to ephemeral frames by string.
+            { agentSubject: this.agent!.subject },
           );
 
           if (invitation) {

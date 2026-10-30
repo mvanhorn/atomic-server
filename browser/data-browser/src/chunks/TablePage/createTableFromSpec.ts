@@ -13,23 +13,30 @@ import {
   commits,
   core,
   dataBrowser,
+  getEffectiveConstraint,
   perfSpan,
   server,
+  setClassConstraint,
   urls,
 } from '@tomic/react';
 import { ViewKind } from './tableViewKinds';
 import type { FilterOperator } from './tableFiltering';
 import {
-  DERIVED_COLUMN_GENERATORS,
-  type DerivedColumnKind,
+  bindFormula,
+  columnSlugs,
+  specFromFormula,
   type DerivedColumnSpec,
+  type DerivedValueKind,
 } from './derivedColumns';
 import { stringToSlug } from '@helpers/stringToSlug';
+import { rowActionKey } from './rowActions';
 import type { RowActionKind, RowActionSpec } from './rowActions';
 import {
   attachPropertiesToClass,
+  createOptionTags,
   createPropertyOnClass,
   createSelectPropertyOnClass,
+  selectConstraintPatch,
 } from './Kanban/createSelectProperty';
 
 /**
@@ -73,20 +80,17 @@ export interface TableColumnSpec {
 }
 
 /**
- * A computed column, described in the same column-name vocabulary as the rest
- * of a spec: its arguments name columns of this table (or are literal numbers),
- * and are resolved to property subjects on creation.
+ * A computed column: a name and a formula that refers to this table's columns by
+ * the lowercase slug of their name (`Last watered` is `last_watered`) and
+ * resolves to property subjects on creation.
  */
 export interface TableDerivedColumnSpec {
   /** The column heading, e.g. 'Duration'. */
   name: string;
-  kind: DerivedColumnKind;
-  /**
-   * The generator's arguments — `difference` takes `from`/`to`, `elapsed`
-   * `from`/`until`, `daysSince` `from`, `product` `a`/`b`, `offset`
-   * `from`/`days`.
-   */
-  args: Record<string, string | number>;
+  /** e.g. `coalesce(end, now()) - start`. See the table-formulas skill. */
+  formula: string;
+  /** How the number is shown; a plain number when omitted. */
+  valueKind?: DerivedValueKind;
 }
 
 /**
@@ -317,21 +321,47 @@ export async function createColumnOnClass(
         throw new Error(
           `Shared property ${column.name} is not a select property`,
         );
-      const options = property.get(core.properties.allowsOnly) as
-        | string[]
-        | undefined;
+      // A shared property may still carry legacy `allowsOnly` options. Take
+      // them over into this table's own class map, which is where options
+      // live now; otherwise this table gets fresh options from the spec.
+      const legacy = (
+        getEffectiveConstraint(store, [], property.subject).enum ?? []
+      ).filter((v): v is string => typeof v === 'string');
 
-      for (const subject of options ?? []) {
+      for (const subject of legacy) {
         const tag = await store.getResource(subject);
         tags[String(tag.get(core.properties.name))] = subject;
       }
 
-      for (const option of column.options ?? []) {
-        if (!tags[option])
-          throw new Error(
-            `Shared property ${column.name} has no option ${option}`,
-          );
+      if (legacy.length > 0) {
+        for (const option of column.options ?? []) {
+          if (!tags[option])
+            throw new Error(
+              `Shared property ${column.name} has no option ${option}`,
+            );
+        }
+
+        await setClassConstraint(tableClass, property.subject, {
+          enum: legacy,
+        });
+      } else {
+        const created = await createOptionTags(
+          store,
+          property.subject,
+          (column.options ?? []).map(name => ({ name })),
+          tableClass.subject,
+        );
+        Object.assign(tags, created.byName);
+        await setClassConstraint(
+          tableClass,
+          property.subject,
+          selectConstraintPatch(created.subjects),
+        );
       }
+    } else if (column.type === 'relation' && column.targetClass) {
+      await setClassConstraint(tableClass, property.subject, {
+        class: column.targetClass,
+      });
     }
 
     if (!deferAttach)
@@ -520,39 +550,22 @@ function resolveRowActions(
 
 function resolveDerivedColumns(
   specs: TableDerivedColumnSpec[],
-  resolve: (reference: string, role: string) => string,
+  columnSubjectByName: Record<string, string>,
 ): DerivedColumnSpec[] {
+  const slugs = columnSlugs(Object.entries(columnSubjectByName));
+
   return specs.map(spec => {
-    const generator = DERIVED_COLUMN_GENERATORS[spec.kind];
+    const { unknown } = bindFormula(spec.formula, slugs);
 
-    if (!generator) {
+    if (unknown.length > 0) {
       throw new Error(
-        `Unknown derived column kind "${spec.kind}". Available kinds: ${Object.keys(
-          DERIVED_COLUMN_GENERATORS,
-        ).join(', ')}`,
+        `Unknown column "${unknown[0][0]}" in the formula of computed column "${spec.name}". Name columns by their lowercase slug: ${Object.keys(slugs).join(', ')}`,
       );
     }
 
-    const args: Record<string, string | number> = {};
-
-    for (const [argument, value] of Object.entries(spec.args)) {
-      if (typeof value === 'number') {
-        args[argument] = value;
-        continue;
-      }
-
-      args[argument] = resolve(
-        value,
-        `the "${argument}" argument of derived column "${spec.name}"`,
-      );
-    }
-
-    return {
-      id: stringToSlug(spec.name),
-      label: spec.name,
-      kind: spec.kind,
-      args,
-    };
+    return specFromFormula(spec.name, spec.formula, slugs, {
+      valueKind: spec.valueKind,
+    });
   });
 }
 
@@ -739,6 +752,15 @@ export function buildViewPropVals(
           return asColumn;
         }
 
+        // A row action, by its label or id.
+        const action = view.rowActions?.find(
+          a => stringToSlug(a.id ?? a.label) === stringToSlug(reference),
+        );
+
+        if (action) {
+          return rowActionKey(stringToSlug(action.id ?? action.label));
+        }
+
         // A computed column, by the name it was created with.
         return `derived:${stringToSlug(reference)}`;
       },
@@ -749,7 +771,7 @@ export function buildViewPropVals(
     // A spec is plain JSON, just a narrower shape than `JSONValue` describes.
     propVals[dataBrowser.properties.viewDerivedColumns] = resolveDerivedColumns(
       view.derivedColumns,
-      require,
+      columnSubjectByName,
     ) as unknown as JSONValue;
   }
 

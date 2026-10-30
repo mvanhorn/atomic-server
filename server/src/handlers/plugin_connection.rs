@@ -17,26 +17,29 @@ async fn authorize(
     appstate: &AppState,
     req: &actix_web::HttpRequest,
     context: &RequestContext,
+    raw: &[u8],
     target: &Target,
 ) -> AtomicServerResult<()> {
-    let account = super::plugin_schedule::authorize(appstate, req, context, &target.plugin).await?;
-    let host = StoreHost {
-        db: std::sync::Arc::new(appstate.store.clone()),
-        plugin: target.plugin.clone(),
-        drive: target.drive.clone(),
-        for_agent: account,
-        manifest: None,
-    };
-    host.validate_binding().await?;
+    let account =
+        crate::helpers::authorize_plugin_write(appstate, req, context, raw, &target.plugin).await?;
+    StoreHost::bound(
+        &appstate.store,
+        &target.drive,
+        &target.plugin,
+        account,
+        None,
+    )
+    .await?;
     Ok(())
 }
 pub async fn read(
     appstate: web::Data<AppState>,
-    body: web::Json<Target>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
-    authorize(&appstate, &req, &context, &body).await?;
+    let body: Target = crate::helpers::parse_json(&raw)?;
+    authorize(&appstate, &req, &context, &raw, &body).await?;
     Ok(HttpResponse::Ok()
         .json(connection_state::read_resolved(&appstate.store, &body.drive, &body.plugin).await?))
 }
@@ -48,12 +51,12 @@ pub struct Update {
 }
 pub async fn checkpoint(
     appstate: web::Data<AppState>,
-    body: web::Json<Update>,
+    raw: web::Bytes,
     req: actix_web::HttpRequest,
     context: RequestContext,
 ) -> AtomicServerResult<HttpResponse> {
-    authorize(&appstate, &req, &context, &body.target).await?;
-    let body = body.into_inner();
+    let body: Update = crate::helpers::parse_json(&raw)?;
+    authorize(&appstate, &req, &context, &raw, &body.target).await?;
     Ok(HttpResponse::Ok().json(
         connection_state::checkpoint(
             &appstate.store,

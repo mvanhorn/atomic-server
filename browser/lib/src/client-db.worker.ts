@@ -42,6 +42,12 @@ export type WorkerRequest =
       migrateLegacy?: boolean;
       /** Allow discarding an undecryptable `dbName`; see `client-db-open.ts`. */
       discardUndecryptable?: boolean;
+      /**
+       * Drives that exist only in this browser (`Store.registerLocalOnlyDrive`).
+       * Chat messages are moved into chat log pages for these alone; a drive a
+       * server hosts gets its pages from the server.
+       */
+      localOnlyDrives?: string[];
     }
   | { id: number; type: 'getResource'; subject: string }
   | { id: number; type: 'getResourceWithSnapshot'; subject: string }
@@ -91,6 +97,8 @@ export type WorkerRequest =
       /** Constraints on values computed per resource, evaluated in the same WASM
        *  pass. */
       expressionFilters?: unknown;
+      /** Also return trashed resources (default hidden). */
+      includeTrashed?: boolean;
     }
   | {
       id: number;
@@ -99,6 +107,7 @@ export type WorkerRequest =
       limit?: number;
       parents?: string | string[];
       filters?: Record<string, string | number | string[]>;
+      includeTrashed?: boolean;
     }
   | { id: number; type: 'allSubjects' }
   | { id: number; type: 'populate' }
@@ -138,6 +147,7 @@ export type WorkerRequest =
       checkpointN: number;
       driveHasCheckpoint: boolean;
       observedLanes: Record<string, number>;
+      currentStateOnly?: boolean;
     }
   | {
       id: number;
@@ -211,6 +221,7 @@ async function handleMessage(msg: WorkerRequest): Promise<unknown> {
         msg.dbKey,
         msg.migrateLegacy,
         msg.discardUndecryptable,
+        msg.localOnlyDrives,
       );
 
       return await initPromise;
@@ -388,6 +399,7 @@ async function handleMessage(msg: WorkerRequest): Promise<unknown> {
         msg.filters ?? null,
         msg.aggregation ?? null,
         msg.expressionFilters ?? null,
+        msg.includeTrashed ?? null,
       );
     }
 
@@ -399,6 +411,7 @@ async function handleMessage(msg: WorkerRequest): Promise<unknown> {
         msg.limit ?? null,
         msg.parents ?? null,
         msg.filters ?? null,
+        msg.includeTrashed ?? null,
       );
     }
 
@@ -506,6 +519,7 @@ async function handleMessage(msg: WorkerRequest): Promise<unknown> {
         BigInt(msg.checkpointN),
         msg.driveHasCheckpoint,
         msg.observedLanes,
+        msg.currentStateOnly ?? false,
       );
     }
 
@@ -627,6 +641,7 @@ async function doInit(
   dbKey?: Uint8Array,
   migrateLegacy?: boolean,
   discardUndecryptable?: boolean,
+  localOnlyDrives?: string[],
 ): Promise<ClientDbInitTimings> {
   // Dynamic import of the WASM glue code.
   // The URL should point to the directory containing atomic_wasm.js and atomic_wasm_bg.wasm
@@ -671,6 +686,8 @@ async function doInit(
     discardUndecryptable: discardUndecryptable ?? false,
   });
   db = opened.db;
+  await migrateIndexKeys(db);
+  await migrateMessages(db, localOnlyDrives ?? []);
   const t3 = performance.now();
 
   return {
@@ -679,6 +696,88 @@ async function doInit(
     dbOpenMs: round2(t3 - t2),
     totalMs: round2(t3 - t0),
   };
+}
+
+/** Resources the index rebuild handles per slice: small enough to report
+ *  often, large enough that the round trips cost nothing. */
+const INDEX_MIGRATION_SLICE = 100;
+
+/**
+ * Rebuilds the atom indexes of a database written with an older key layout,
+ * before anything is served from it (a query would miss rows). Progress goes to
+ * the page as `migration-progress` messages. Runs inside `init`, so the page
+ * only sees the database as ready once this is done.
+ */
+async function migrateIndexKeys(opened: WasmModule): Promise<void> {
+  if (!opened.indexMigrationPending?.()) return;
+
+  const report = (done: number, total: number, finished: boolean) =>
+    self.postMessage({ type: 'migration-progress', done, total, finished });
+
+  report(0, 0, false);
+
+  for (;;) {
+    const step = JSON.parse(opened.migrateIndexKeysStep(INDEX_MIGRATION_SLICE));
+    report(step.done, step.total, step.finished);
+
+    if (step.finished) return;
+
+    // Let the worker answer other messages (they queue behind `init`).
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+}
+
+/** Messages the chat migration handles per slice (whole chats at a time). */
+const MESSAGE_MIGRATION_SLICE = 500;
+
+/**
+ * Moves old chat messages into chat log pages (`planning/chat-log.md`): the
+ * `Message` resources of group chats and comments, then the `ai-message`
+ * resources of AI chats. Pages are written for the drives that exist only in
+ * this browser; for a drive a server hosts the server makes them and this only
+ * drops cached messages that already have their entry. Progress goes to the page
+ * as `migration-progress` messages, like the index rebuild. Runs inside
+ * `init`.
+ */
+async function migrateMessages(
+  opened: WasmModule,
+  localOnlyDrives: string[],
+): Promise<void> {
+  const drives = JSON.stringify(localOnlyDrives);
+
+  await runChatMigration(opened.messageMigrationPending?.(), () =>
+    opened.migrateMessagesStep(MESSAGE_MIGRATION_SLICE, drives),
+  );
+  await runChatMigration(opened.aiChatMigrationPending?.(), () =>
+    opened.migrateAiChatsStep(MESSAGE_MIGRATION_SLICE, drives),
+  );
+}
+
+async function runChatMigration(
+  pending: boolean | undefined,
+  step: () => Promise<string>,
+): Promise<void> {
+  if (!pending) return;
+
+  const report = (done: number, total: number, finished: boolean) =>
+    self.postMessage({
+      type: 'migration-progress',
+      phase: 'messages',
+      done,
+      total,
+      finished,
+    });
+
+  report(0, 0, false);
+
+  for (;;) {
+    const result = JSON.parse(await step());
+    report(result.done, result.total, result.finished);
+
+    if (result.finished) return;
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
 }
 
 async function ensureInit(): Promise<void> {

@@ -1,7 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { core } from '@tomic/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { core, signRequest } from '@tomic/react';
 import type { Store } from '@tomic/react';
-import { handleRequest, isHostRequest, isWithinApp } from './hostStore';
+import {
+  handleRequest,
+  isHostRequest,
+  isWithinApp,
+  MAX_GET_MANY,
+} from './hostStore';
 
 vi.mock('@tomic/react', async () => {
   const actual =
@@ -9,8 +14,23 @@ vi.mock('@tomic/react', async () => {
 
   // Signing needs a real key and a real agent; what these tests are about is
   // which requests leave and which are refused before they do.
-  return { ...actual, signRequest: async () => ({}) };
+  return {
+    ...actual,
+    signRequest: vi.fn(async () => ({})),
+    // Reading an importer's stored config is tested in @tomic/lib
+    // (plugin-destination.test.ts); here only what `data` passes on.
+    destinationTablesFor: async (
+      _store: unknown,
+      _drive: string,
+      table: string,
+    ) => (table === 'did:ad:transactions' ? DESTINATION_TABLES : undefined),
+  };
 });
+
+const DESTINATION_TABLES = {
+  statements: { table: 'did:ad:statements', rowClass: 'did:ad:statement' },
+  closingBalances: { table: 'did:ad:balances', rowClass: 'did:ad:balance' },
+};
 
 const APP = 'did:ad:app';
 const DRIVE = 'did:ad:drive';
@@ -254,6 +274,22 @@ describe('writing as the app', () => {
     expect(viewing.table).toBe('did:ad:someone-elses-table');
   });
 
+  it('names the other tables of a multi-class destination by their keys', async () => {
+    const store = fakeStore();
+
+    await expect(
+      handleRequest(store, APP, DRIVE, req('data'), 'did:ad:transactions'),
+    ).resolves.toEqual({
+      table: 'did:ad:transactions',
+      rowClass: undefined,
+      tables: DESTINATION_TABLES,
+    });
+    // A single-table destination, or any other table, answers as before.
+    await expect(
+      handleRequest(store, APP, DRIVE, req('data'), 'did:ad:other'),
+    ).resolves.toEqual({ table: 'did:ad:other', rowClass: undefined });
+  });
+
   it('refuses an operation it does not implement', async () => {
     const store = fakeStore();
 
@@ -283,6 +319,7 @@ describe('integration-proxy capabilities', () => {
   const proxy = {
     capability: vi.fn(async () => minted),
     connections: vi.fn(async () => [{ connectionId: 'c1', platform: 'pets' }]),
+    origin: 'https://proxy.example',
   };
 
   it('mints a capability for the frame key, never touching the server', async () => {
@@ -374,5 +411,247 @@ describe('integration-proxy capabilities', () => {
         proxy,
       ),
     ).rejects.toThrow();
+  });
+});
+
+describe('proxyFetch', () => {
+  const proxy = {
+    capability: vi.fn(),
+    connections: vi.fn(),
+    origin: 'https://proxy.example',
+  };
+  const call = (extra: Record<string, unknown>) =>
+    handleRequest(
+      fakeStore(),
+      APP,
+      DRIVE,
+      req('proxyFetch', {
+        url: 'https://proxy.example/proxy/c1/pets/pets',
+        method: 'GET',
+        headers: { Authorization: 'Capability x', 'x-atomic-agent': 'a' },
+        ...extra,
+      }),
+      undefined,
+      proxy,
+    );
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends to the proxy origin and returns only allowlisted headers', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { etag: '"1"', 'set-cookie': 'x=y', 'x-secret': 's' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await call({});
+
+    expect(result).toEqual({
+      status: 200,
+      headers: { etag: '"1"', 'content-type': 'text/plain;charset=UTF-8' },
+      text: '{"ok":true}',
+    });
+    const init = (
+      fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    )[1];
+    expect(init.credentials).toBe('omit');
+    expect(init.redirect).toBe('error');
+  });
+
+  it('refuses another origin, a non-proxy path and bad methods', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      call({ url: 'https://evil.example/proxy/c1/pets/pets' }),
+    ).rejects.toThrow('only call the integration proxy');
+    await expect(call({ url: 'https://proxy.example/other' })).rejects.toThrow(
+      'only call the integration proxy',
+    );
+    await expect(call({ method: 'TRACE' })).rejects.toThrow(
+      'Invalid proxy method',
+    );
+    await expect(call({ headers: { Cookie: 'a=b' } })).rejects.toThrow(
+      'not allowed',
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a response over the size limit', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('x'.repeat(10 * 1024 * 1024 + 1))),
+    );
+
+    await expect(call({})).rejects.toThrow('exceeds 10 MB');
+  });
+});
+
+describe('getMany', () => {
+  /** A store holding `rows` in memory; anything else cannot be read. */
+  function rowStore(rows: Record<string, Record<string, unknown>>) {
+    const getResource = vi.fn(async (subject: string) => ({
+      subject,
+      title: String(rows[subject]?.name ?? subject),
+      error: rows[subject] ? undefined : new Error(`Unauthorized: ${subject}`),
+      getPropVals: () => ({ ...rows[subject] }),
+    }));
+
+    return { store: { getResource } as unknown as Store, getResource, rows };
+  }
+
+  it('reads each subject as get does, in order, in one answer', async () => {
+    const { store, rows } = rowStore({
+      'did:ad:a': { name: 'A' },
+      'did:ad:b': { name: 'B' },
+    });
+
+    const many = (await handleRequest(
+      store,
+      APP,
+      DRIVE,
+      req('getMany', { subjects: ['did:ad:b', 'did:ad:a'] }),
+    )) as unknown[];
+    expect(many).toEqual([
+      { subject: 'did:ad:b', title: 'B', props: { name: 'B' }, loading: false },
+      { subject: 'did:ad:a', title: 'A', props: { name: 'A' }, loading: false },
+    ]);
+
+    // Same store, same state as `get`: a write this page already applied is
+    // what both see.
+    rows['did:ad:a'] = { name: 'A, edited' };
+    const [one] = (await handleRequest(
+      store,
+      APP,
+      DRIVE,
+      req('getMany', { subjects: ['did:ad:a'] }),
+    )) as Array<{ props: unknown }>;
+    const single = (await handleRequest(
+      store,
+      APP,
+      DRIVE,
+      req('get', { subject: 'did:ad:a' }),
+    )) as { propVals: unknown };
+    expect(one.props).toEqual(single.propVals);
+    expect(one.props).toEqual({ name: 'A, edited' });
+    expect(sent).toEqual([]);
+  });
+
+  it('reports one it cannot read in its place, without failing the rest', async () => {
+    const { store } = rowStore({ 'did:ad:a': { name: 'A' } });
+
+    expect(
+      await handleRequest(
+        store,
+        APP,
+        DRIVE,
+        req('getMany', { subjects: ['did:ad:secret', 'did:ad:a'] }),
+      ),
+    ).toEqual([
+      { subject: 'did:ad:secret', error: 'Unauthorized: did:ad:secret' },
+      expect.objectContaining({ subject: 'did:ad:a' }),
+    ]);
+  });
+
+  it(`refuses more than ${MAX_GET_MANY} before reading any`, async () => {
+    const { store, getResource } = rowStore({});
+    const subjects = Array.from(
+      { length: MAX_GET_MANY + 1 },
+      (_, i) => `did:ad:${i}`,
+    );
+
+    await expect(
+      handleRequest(store, APP, DRIVE, req('getMany', { subjects })),
+    ).rejects.toThrow(`at most ${MAX_GET_MANY}`);
+    expect(getResource).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'did:ad:a', [42], [''], [{ subject: 'did:ad:a' }]])(
+    'refuses %j as subjects',
+    async subjects => {
+      const { store, getResource } = rowStore({});
+      await expect(
+        handleRequest(store, APP, DRIVE, req('getMany', { subjects })),
+      ).rejects.toThrow('array of subjects');
+      expect(getResource).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('call', () => {
+  const call = (extra: Record<string, unknown> = {}) =>
+    handleRequest(
+      fakeStore(),
+      APP,
+      DRIVE,
+      req('call', {
+        interface: 'atomic:example/counter@1',
+        function: 'increment',
+        args: { n: 1 },
+        ...extra,
+      }),
+    );
+  const answer = (status: number, body: unknown) =>
+    vi.mocked(fetch).mockImplementationOnce((async () => ({
+      ok: status < 400,
+      status,
+      text: async () =>
+        typeof body === 'string' ? body : JSON.stringify(body),
+    })) as unknown as typeof fetch);
+
+  it('posts a signed call to the drive server and returns the result', async () => {
+    answer(200, { result: { value: 2 } });
+
+    expect(await call()).toEqual({ value: 2 });
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://node.test/host/call');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      drive: DRIVE,
+      interface: 'atomic:example/counter@1',
+      function: 'increment',
+      args: { n: 1 },
+      allowEffects: ['read'],
+    });
+  });
+
+  it('signs the method and the exact body (version 2), and only allows read exports', async () => {
+    answer(200, { result: {} });
+    await call();
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+
+    expect(signRequest).toHaveBeenCalledWith(
+      'https://node.test/host/call',
+      expect.anything(),
+      {},
+      { method: 'POST', body: init.body },
+    );
+    // The frame cannot widen it: its own `allowEffects` is never read.
+    answer(200, { result: {} });
+    await call({ allowEffects: ['write'] });
+    const [, second] = vi.mocked(fetch).mock.calls[1] as [string, RequestInit];
+
+    expect(JSON.parse(second.body as string).allowEffects).toEqual(['read']);
+  });
+
+  it('turns an error body into a HostError with its code', async () => {
+    answer(403, { error: { code: 'forbidden', message: 'no right' } });
+
+    await expect(call()).rejects.toMatchObject({
+      name: 'HostError',
+      code: 'forbidden',
+      message: 'no right',
+    });
+  });
+
+  it('reports a non-JSON failure as internal, and checks its input', async () => {
+    answer(502, 'Bad gateway');
+
+    await expect(call()).rejects.toMatchObject({ code: 'internal' });
+    await expect(call({ interface: '' })).rejects.toThrow('interface');
+    await expect(call({ args: 'x' })).rejects.toThrow('object');
   });
 });

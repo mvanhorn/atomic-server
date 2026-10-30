@@ -4,12 +4,12 @@
 
 You can run AtomicServer in different ways:
 
-1. Using docker (probably the quickest): `docker run -p 80:80 -p 443:443 -v atomic-storage:/atomic-storage ghcr.io/ontola/atomic-server`
-2. From a published [binary](https://github.com/atomicdata-dev/atomic-server/releases)
+1. Using docker (probably the quickest): `docker run -p 80:80 -v atomic-storage:/atomic-storage ghcr.io/ontola/atomic-server`
+2. From a published [binary](https://github.com/ontola/atomic-server/releases)
 3. Using [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html) from crates.io: `cargo install atomic-server`
 4. Manually from source
 
-If you want to run AtomicServer locally as a developer / contributor, check out [the Contributors guide](https://github.com/atomicdata-dev/atomic-server/blob/develop/CONTRIBUTING.md).
+If you want to run AtomicServer locally as a developer / contributor, check out [the Contributors guide](https://github.com/ontola/atomic-server/blob/develop/CONTRIBUTING.md).
 
 ## Privacy: your server never phones home
 
@@ -53,16 +53,43 @@ injects one.
 
 ## 1. Run using docker
 
-- Run: `docker run -p 80:80 -p 443:443 -v atomic-storage:/atomic-storage ghcr.io/ontola/atomic-server`
-The `dockerfile` is located in the project root, above this `server` folder.
-- Images are published to the GitHub Container Registry — see the [list of all the available tags](https://github.com/ontola/atomic-server/pkgs/container/atomic-server) (e.g. the `develop` tag for the very latest version)
-- If you want to make changes (e.g. to the port), make sure to pass the relevant CLI options (e.g. `--port 9883`).
-- If you want to update, run `docker pull ghcr.io/ontola/atomic-server` and docker should fetch the latest version.
-- By default, docker downloads the `latest` tag. You can find other tags [here](https://github.com/ontola/atomic-server/pkgs/container/atomic-server).
+The quickest way to try it. This starts a server on port 80 and keeps its data in a named volume:
+
+```sh
+docker run -p 80:80 -v atomic-storage:/atomic-storage ghcr.io/ontola/atomic-server
+```
+
+Then open `http://localhost/` (port 80, so no port number). That is the first-run page, where you create your account. In Docker the server listens on port 80, so `http://localhost:9883/setup` only applies to the binary and `cargo run`, which default to port `9883`.
+
+Or with docker-compose. Set `ATOMIC_DOMAIN` to the name people will type in their browser (leave it out for localhost):
+
+```yaml
+services:
+  atomic-server:
+    image: ghcr.io/ontola/atomic-server
+    container_name: atomic-server
+    restart: unless-stopped
+    ports:
+      - 80:80
+    environment:
+      ATOMIC_DOMAIN: atomic.example.com
+    volumes:
+      - atomic-storage:/atomic-storage
+volumes:
+  atomic-storage:
+```
+
+Things to know:
+
+- **Port 443 only works with `--https`.** Publishing `-p 443:443` does nothing unless you also run the server with `--https` (and `--email`, see [HTTPS setup](#https-setup-on-a-vps-static-ip-required)), which makes it terminate TLS itself. If you put a reverse proxy in front instead, publish only port 80 and read [Behind a reverse proxy](#behind-a-reverse-proxy-nginx-caddy-traefik-ferron-cloudflare-tunnel).
+- **Hosts without IPv6.** The server binds to `::` by default. On a host or container without IPv6 support that fails with `Address family not supported by protocol`. Add `-e ATOMIC_IP=0.0.0.0` (or `ATOMIC_IP: 0.0.0.0` in docker-compose).
+- To pass other options, append them after the image name (e.g. `--port 9883`), or set the matching `ATOMIC_*` environment variables.
+- See the [list of all the available tags](https://github.com/ontola/atomic-server/pkgs/container/atomic-server) (`develop` is the very latest version). Docker downloads the `latest` tag by default.
+- To update, run `docker pull ghcr.io/ontola/atomic-server` and restart the container.
 
 ## 2. Run pre-compiled binary
 
-Get the binaries from the [releases page](https://github.com/atomicdata-dev/atomic-server/releases) and copy them to your `bin` folder.
+Get the binaries from the [releases page](https://github.com/ontola/atomic-server/releases) and copy them to your `bin` folder.
 
 ## 3. Install using cargo
 
@@ -81,7 +108,7 @@ atomic-server
 ```sh
 # make sure pnpm is installed and available in path! https://pnpm.io/
 pnpm --version
-git clone git@github.com:atomicdata-dev/atomic-server.git
+git clone git@github.com:ontola/atomic-server.git
 cd atomic-server/server
 cargo run
 ```
@@ -97,7 +124,7 @@ sudo apt-get install -y build-essential pkg-config libssl-dev --fix-missing
 
 - You can configure the server by passing arguments (see `atomic-server --help`), or by setting ENV variables.
 - The server loads the `.env` from the current path by default. Create a `.env` file from the default template in your current directory with `atomic-server generate-dotenv`
-- After running the server, check the logs and take note of the `Agent Subject` and `Private key`. You should use these in the [`atomic-cli`](https://crates.io/crates/atomic-cli) and [atomic-data-browser](https://github.com/atomicdata-dev/atomic-data-browser) clients for authorization.
+- After running the server, check the logs and take note of the `Agent Subject` and `Private key`. You should use these in the [`atomic-cli`](https://crates.io/crates/atomic-cli) and [atomic-data-browser](https://github.com/ontola/atomic-server/tree/develop/browser) clients for authorization.
 - A directory is made: `~/.config/atomic`, which stores your newly created Agent keys, the HTTPS certificates other configuration. Depending on your OS, the actual data is stored in different locations. See use the `show-config` command to find out where, if you need the files.
 - Visit `http://localhost:9883/setup` to **register your first (admin) user**. You can use an existing Agent, or create a new one. Note that if you create a `localhost` agent, it cannot be used on the web (since, well, it's local). More info and steps in [getting started with the GUI](gui.md).
 
@@ -116,7 +143,7 @@ If your server hosts a single site, wiki or dataset that the public should just
 ATOMIC_HOME_DRIVE=internal:/
 
 # ...or a specific Drive
-# ATOMIC_HOME_DRIVE=did:ad:drive:hqfpna7s5ke
+# ATOMIC_HOME_DRIVE=atomic:{genesis}
 ```
 
 Visiting `/` then opens that Drive directly, for signed-out visitors too.
@@ -154,12 +181,41 @@ With such a build, pass **`--enable-vector-index`** (or set **`ATOMIC_ENABLE_VEC
 
 ## Running using a tunneling service (easy mode)
 
-If you want to make your -server available on the web, but don't want (or cannot) deal with setting up port-forwarding and DNS, you can use a tunneling service.
-It's the easiest way to get your server to run on the web, yet still have full control over your server.
+If you want to make your server available on the web, but don't want (or cannot) deal with setting up port-forwarding and DNS, you can use a tunneling service.
+It's the easiest way to get a public HTTPS address, yet you keep full control over your data.
 
-- Create an account on some tunneling service, such as [tunnelto.dev](https://tunnelto.dev/) (which we will use here). Make sure to reserve a subdomain, you want it to remain stable.
-- `tunnelto --port 9883 --subdomain joepio --key YOUR_API_KEY`
-- `atomic-server --domain joepio.tunnelto.dev --custom-server-url 'https://joepio.tunnelto.dev' --initialize`
+We recommend a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) quick tunnel. It needs no account, and it handles WebSockets, which AtomicServer needs for real-time sync. Other tunnels such as tunnelto are known to drop the WebSocket connection, which leaves the app stuck on "Loading".
+
+```sh
+# 1. Start the tunnel. It prints a public address like https://random-words.trycloudflare.com
+cloudflared tunnel --url http://localhost:9883
+
+# 2. In a second terminal, start the server with that host as its domain
+ATOMIC_DOMAIN=random-words.trycloudflare.com \
+ATOMIC_SERVER_URL=https://random-words.trycloudflare.com \
+atomic-server --initialize
+```
+
+- `ATOMIC_DOMAIN` must be the **public host** (no scheme, no port). The server uses it to decide which origin it accepts logins for. Leave it at `localhost` and sign-in over the WebSocket fails with `does not name this server`.
+- `ATOMIC_SERVER_URL` (or `--server-url`) is the public URL including `https://`. The tunnel terminates TLS, so the server needs to be told its public address, see [Behind a reverse proxy](#behind-a-reverse-proxy-nginx-caddy-traefik-ferron-cloudflare-tunnel).
+- Keep the server on plain HTTP (no `--https`); cloudflared forwards to it.
+- A quick tunnel is **public while it runs**, and its address changes on every start, so use it for testing and demos. For a stable address, use a named Cloudflare Tunnel, or a reverse proxy on your own domain.
+- Before you share the address, read [Putting your server on the internet](#putting-your-server-on-the-internet).
+
+## Behind a reverse proxy (nginx, Caddy, Traefik, Ferron, Cloudflare Tunnel)
+
+`--https` means that atomic-server terminates TLS itself. Behind a proxy that does it for you, leave it off, and tell the server its public URL instead:
+
+```ini
+ATOMIC_PORT=80
+ATOMIC_HTTPS=false
+ATOMIC_DOMAIN=atomic.example.com
+ATOMIC_SERVER_URL=https://atomic.example.com
+```
+
+Without `ATOMIC_SERVER_URL` (or `--server-url`) the server builds its own address from `--https` and `--domain`, so it calls itself `http://atomic.example.com`. Resources it names itself, such as `/query` and everything delivered over the WebSocket, then reach your `https://` page as `http://` links, which the browser blocks as mixed content. Child resources of a Drive fail to load and real-time sync stops. The server logs a warning at boot when it sees a public-looking `ATOMIC_DOMAIN` with `ATOMIC_HTTPS` off and no server URL.
+
+For requests that arrive through the proxy the server also honours `X-Forwarded-Proto` and `X-Forwarded-Host`, for hosts it is configured to serve, so make your proxy send them. `ATOMIC_SERVER_URL` is what applies where there is no request, and is the fallback when the headers are missing.
 
 ## HTTPS Setup on a VPS (static IP required)
 
@@ -174,7 +230,7 @@ You can also set these things using a `.env` or by setting them some other way.
 
 Make sure the server is accessible at `ATOMIC_DOMAIN` at port 80, because Let's Encrypt will send an HTTP request to this server's `/.well-known` directory to check the keys.
 The default Ports are `9883` for HTTP, and `9884` for HTTPS.
-If you're running the server publicly, set these to `80` and `433`: `atomic-server --https --port 80 --port-https 433`.
+If you're running the server publicly, set these to `80` and `443`: `atomic-server --https --port 80 --port-https 443`.
 It will now initialize the certificate.
 Read the logs, watch for errors.
 
@@ -205,6 +261,19 @@ the connection arrives from the proxy, on the local interface. It will not warn
 you. See [Putting your server on the internet](#putting-your-server-on-the-internet)
 for what to set so strangers cannot store their data on your disk.
 
+## Make your server shareable
+
+Invite links and sync QR codes only work from a **public HTTPS address**. Browsers only allow the local storage the app needs on a secure origin (`https://`, or `http://localhost`), and a link that says `localhost` means something different on every device. So before you invite anyone or pair a phone:
+
+1. **Give the server a public name.** Set `ATOMIC_DOMAIN` to the name people type in their browser, for example `ATOMIC_DOMAIN=atomic.example.com`, with a DNS record pointing at your server.
+2. **Serve it over HTTPS.** Either let the server do it with `--https` (and `--email`, see [HTTPS Setup on a VPS](#https-setup-on-a-vps-static-ip-required)), or put a reverse proxy in front and set `ATOMIC_SERVER_URL=https://atomic.example.com` (see [Behind a reverse proxy](#behind-a-reverse-proxy-nginx-caddy-traefik-ferron-cloudflare-tunnel)). For a quick test, a [tunnel](#running-using-a-tunneling-service-easy-mode) gives you a public HTTPS address without any DNS.
+3. **Say who owns it**, so strangers cannot use your disk. Order matters, because the ID comes from an account:
+   1. Start the server and create your account (the first-run page, see [Initial setup](#initial-setup-and-configuration)).
+   2. Open **Settings** and copy your **Agent ID** (it starts with `atomic:agent:`). Use the ID, never the secret.
+   3. Restart the server with `ATOMIC_OWNER_AGENT=atomic:agent:AbCd...`. This selects owner mode (`ATOMIC_HOST_MODE=owner`) by itself. Setting `ATOMIC_HOST_MODE=owner` without an `ATOMIC_OWNER_AGENT` makes the server refuse to start, and `ATOMIC_HOST_MODE=open` deliberately keeps sign-up open.
+
+   Details are in [Putting your server on the internet](#putting-your-server-on-the-internet).
+
 ## Putting your server on the internet
 
 By default, **anyone who can reach your server can create an account on it and
@@ -218,7 +287,7 @@ as private as their permissions say. It is about who may put *new* data here.
 ### Name yourself as the owner
 
 You need your Agent ID: a public identifier that looks like
-`did:ad:agent:AbCd...`. If you do not have one yet, run the server on your own
+`atomic:agent:AbCd...`. If you do not have one yet, run the server on your own
 machine first, click **Create account**, and copy the Agent ID from Settings.
 Your phone or the desktop app work equally well — an identity is a keypair, it
 does not belong to any particular server.
@@ -226,13 +295,13 @@ does not belong to any particular server.
 Then set it on the server that will be public:
 
 ```ini
-ATOMIC_OWNER_AGENT=did:ad:agent:AbCd...
+ATOMIC_OWNER_AGENT=atomic:agent:AbCd...
 ```
 
 That is the whole setup. Restart, and the server will say so at boot:
 
 ```text
-Only its owner can create new Drives here (did:ad:agent:AbCd...).
+Only its owner can create new Drives here (atomic:agent:AbCd...).
 ```
 
 > **Use the Agent ID, never the secret.** The ID is public and safe to put in a
@@ -264,6 +333,9 @@ still `localhost`. As far as the process can tell, it is a private machine.
 
 If your server is reachable from the internet by any route, set
 `ATOMIC_OWNER_AGENT`. Nothing else infers it for you.
+
+Also set `ATOMIC_SERVER_URL` to the public address, see
+[Behind a reverse proxy](#behind-a-reverse-proxy-nginx-caddy-traefik-ferron-cloudflare-tunnel).
 
 ### Running an open server on purpose
 
@@ -468,6 +540,18 @@ Options:
 
           [env: ATOMIC_ANONYMOUS_WRITE_RATE_LIMIT=]
           [default: 60]
+
+      --commit-soft-limit <COMMIT_SOFT_LIMIT>
+          How many commits may be in flight (being applied or queued for the single redb writer) before the node starts telling clients to commit less often. Up to this many the `pace_ms` hint is 0. Clients that advertise `commit-pace` (WebSocket) or read `X-Atomic-Pace-Ms` (HTTP) then stretch their commit interval, so each commit carries more edits. The hint rises linearly to 10 s at `--commit-hard-limit`. See `docs/src/websockets.md`
+
+          [env: ATOMIC_COMMIT_SOFT_LIMIT=]
+          [default: 32]
+
+      --commit-hard-limit <COMMIT_HARD_LIMIT>
+          How many commits may be in flight before new ones are refused up front with `BUSY` (WebSocket error code 12) or `503` with `Retry-After` (HTTP). Nothing is lost: the client keeps the edit and retries after the jittered delay. `0` disables both the pace hint and the refusal
+
+          [env: ATOMIC_COMMIT_HARD_LIMIT=]
+          [default: 256]
 
       --domain <DOMAIN>
           The origin domain where the app is hosted, without the port and schema values

@@ -1,5 +1,5 @@
 import { websiteVersionName } from '@chunks/Website/websiteVersionName';
-import { forwardRef, memo } from 'react';
+import { forwardRef, memo, useState } from 'react';
 import { styled, css, keyframes } from 'styled-components';
 import { SideBarItem } from '../SideBarItem';
 import { FloatingActions, floatingHoverStyles } from './FloatingActions';
@@ -35,6 +35,10 @@ interface SidebarItemTitleProps {
 const NavResourceLink = styled(StyledLink)`
   display: flex;
   align-self: stretch;
+  /* A held touch is ours (menu or drag): no native callout or selection. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 `;
 
 export const SidebarItemTitle = memo(
@@ -55,12 +59,14 @@ export const SidebarItemTitle = memo(
       ref,
     ): React.JSX.Element => {
       const resource = useResource(subject);
-      const { sidebarKeyboardDndEnabled } = useSettings();
+      const { sidebarKeyboardDndEnabled, showSidebarIcons } = useSettings();
       // A resource's own icon image or emoji takes precedence over its
       // class icon (the precedence lives in ResourceGlyph).
+      // With "Show icons in the sidebar" off there is no glyph at all: the
+      // title starts at the row's own padding.
       const glyph = (
         <GlyphSlot aria-hidden>
-          <ResourceGlyph resource={resource} />
+          {showSidebarIcons && <ResourceGlyph resource={resource} />}
         </GlyphSlot>
       );
       // Reactive title via `useTitle` (subscribes to `name`/`shortname`/
@@ -72,23 +78,35 @@ export const SidebarItemTitle = memo(
       const [storedTitle] = useTitle(resource);
       const title = websiteVersionName(storedTitle);
 
+      // The context menu is only visible on hover or focus, so it mounts then.
+      // Mounting one per row cost ~3 ms a render, on every row, every click.
+      const [actionsArmed, setActionsArmed] = useState(false);
+      const armActions = () => setActionsArmed(true);
+
       const expandLabel = expanded ? 'Collapse folder' : 'Expand folder';
 
       // An expandable row keeps its icon and wears the caret as a small
       // badge in its corner: always visible, so the row reads as a folder
       // without hovering it, and grown on hover.
-      const expandControl = (
+      // Without icons the caret stands alone, as the folder's only mark.
+      const expandControl = showSidebarIcons ? (
         <GlyphWithCaret>
           {glyph}
           <CaretBadge aria-hidden>
             <ExpandCaret $open={expanded} />
           </CaretBadge>
         </GlyphWithCaret>
+      ) : (
+        <GlyphWithCaret>
+          <ExpandCaret $open={expanded} aria-hidden />
+        </GlyphWithCaret>
       );
 
       return (
         <ActionWrapper
           isDragging={isDragging}
+          onPointerEnter={armActions}
+          onFocus={armActions}
           data-sidebar-id={getTransitionName(SIDEBAR_TRANSITION_TAG, subject)}
         >
           {sidebarKeyboardDndEnabled ? (
@@ -197,7 +215,7 @@ export const SidebarItemTitle = memo(
                 resource={subject}
               >
                 <TextWrapper>
-                  <LeadingSlot>{glyph}</LeadingSlot>
+                  {showSidebarIcons && <LeadingSlot>{glyph}</LeadingSlot>}
                   <TreeRowTitle>{title}</TreeRowTitle>
                   <SidebarPresence subject={subject} />
                 </TextWrapper>
@@ -206,7 +224,7 @@ export const SidebarItemTitle = memo(
           )}
           {!hideActionButtons && (
             <FloatingActionsCell>
-              <FloatingActions subject={subject} />
+              <FloatingActions subject={subject} armed={actionsArmed} />
             </FloatingActionsCell>
           )}
         </ActionWrapper>
@@ -274,8 +292,10 @@ const ExpandToggleButton = styled.button`
   cursor: pointer;
   color: ${p => p.theme.colors.main};
 
-  &:hover {
-    background-color: ${p => p.theme.colors.bg1};
+  @media (hover: hover) {
+    &:hover {
+      background-color: ${p => p.theme.colors.bg1};
+    }
   }
 
   &:active {
@@ -397,7 +417,9 @@ const ActionWrapper = styled.div<{ isDragging?: boolean }>`
     }
   }
 
-  ${ExpandToggleButton}:hover ${CaretBadge} {
-    transform: scale(1.6);
+  @media (hover: hover) {
+    ${ExpandToggleButton}:hover ${CaretBadge} {
+      transform: scale(1.6);
+    }
   }
 `;

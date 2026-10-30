@@ -12,6 +12,8 @@
  */
 
 let nextId = 0;
+/** The host refuses larger `getMany` batches; say so before asking. */
+const MAX_GET_MANY = 100;
 const pending = new Map();
 
 window.addEventListener('message', event => {
@@ -29,7 +31,15 @@ window.addEventListener('message', event => {
   clearTimeout(settle.timer);
 
   if (message.error) {
-    settle.reject(new Error(message.error));
+    const error = new Error(message.error);
+
+    // A failed `call` names why, in the host ABI's codes.
+    if (message.code) {
+      error.name = 'HostError';
+      error.code = message.code;
+    }
+
+    settle.reject(error);
   } else {
     settle.resolve(message.result);
   }
@@ -51,6 +61,38 @@ function point(at) {
   if (at && typeof at.clientX === 'number') return { x: at.clientX, y: at.clientY };
 
   return at;
+}
+
+// ---- Theme: whether the host is light or dark ----
+
+/** The last `colorScheme` the host sent, once one has arrived here. */
+let colorScheme;
+const themeListeners = new Set();
+
+window.addEventListener('message', event => {
+  if (event.source !== window.parent || event.data?.type !== '__atomic_style') return;
+  const next = event.data.colorScheme;
+  if (next !== 'light' && next !== 'dark') return;
+  // Compared with what `getTheme()` already said, so the first message after
+  // load is not reported as a switch.
+  const changed = next !== currentColorScheme();
+  colorScheme = next;
+  if (changed) for (const listener of themeListeners) listener({ colorScheme });
+});
+
+/**
+ * The host's scheme. The page shell applies the host's theme before this
+ * module runs, so until a message arrives here, read it back from the
+ * `color-scheme` the theme stylesheet sets on `:root`.
+ */
+function currentColorScheme() {
+  if (colorScheme) return colorScheme;
+
+  try {
+    return getComputedStyle(document.documentElement).colorScheme.split(' ').includes('dark') ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
 }
 
 /**
@@ -212,6 +254,30 @@ export const store = {
   },
 
   /**
+   * Reads up to 100 resources in one round trip, with the same rights as
+   * `getResource` and seeing this person's own writes the same way.
+   * Resolves to an array in the order asked: a resource for each one that
+   * could be read, and `{ subject, error }` in the place of one that could
+   * not, so one missing row does not fail the rest. More than 100 is
+   * refused; ask in batches.
+   */
+  async getMany(subjects) {
+    const list = Array.from(subjects ?? []);
+
+    if (list.length > MAX_GET_MANY) {
+      throw new Error(`getMany reads at most ${MAX_GET_MANY} subjects at a time; ask in batches`);
+    }
+
+    if (list.length === 0) return [];
+
+    const results = await send('getMany', { subjects: list });
+
+    return results.map(entry =>
+      entry.error === undefined ? makeResource(entry.subject, entry.props, entry.title) : { subject: entry.subject, error: entry.error },
+    );
+  },
+
+  /**
    * Creates a resource. `parent` defaults to the app, which is the one place
    * a view may always write.
    */
@@ -231,6 +297,16 @@ export const store = {
    */
   async apply(intents) {
     return send('apply', { intents });
+  },
+
+  /**
+   * Calls a function another app in this drive exports, as the signed-in
+   * person: `store.callExport('atomic:example/counter@1', 'increment', { ... })`.
+   * Resolves to the result; rejects with an error whose `code` is the host's
+   * (`not-found`, `forbidden`, `invalid-argument`, ...).
+   */
+  async callExport(iface, fn, args = {}) {
+    return send('call', { interface: iface, function: fn, args });
   },
 
   /** Reverts this view's latest `apply`. False when there is nothing to undo. */
@@ -263,6 +339,27 @@ export const store = {
       window.removeEventListener('message', listener);
       void send('unsubscribe', { subject });
     };
+  },
+
+  /**
+   * The host's theme, as far as an app needs to branch on it:
+   * `{ colorScheme: 'light' | 'dark' }`, from the host's actual setting.
+   * Colours themselves are CSS variables on `:root` (`--t-color-bg`,
+   * `--t-color-text`, `--t-color-main`, `--t-color-alert`,
+   * `--t-color-warning`, `--t-color-success`, ...).
+   */
+  getTheme() {
+    return { colorScheme: currentColorScheme() };
+  },
+
+  /**
+   * Calls back with `{ colorScheme }` when the person switches the host
+   * between light and dark, until the returned function runs.
+   */
+  onThemeChange(handler) {
+    themeListeners.add(handler);
+
+    return () => themeListeners.delete(handler);
   },
 
   /**
@@ -386,7 +483,6 @@ export const store = {
 
 const PROXY_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const PROXY_HEADERS = ['link', 'retry-after', 'etag', 'content-type'];
-const PROXY_MAX_BODY = 10 * 1024 * 1024;
 /** Mint a new capability this long before the current one expires. */
 const CAPABILITY_MARGIN_MS = 60_000;
 
@@ -485,28 +581,6 @@ function proxyTarget(aud, connectionId, platform, path, query) {
   return url;
 }
 
-async function limitedText(response) {
-  if (!response.body) return '';
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = '';
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > PROXY_MAX_BODY) throw new Error('Proxy response exceeds 10 MB');
-      text += decoder.decode(value, { stream: true });
-    }
-
-    return text + decoder.decode();
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-}
-
 function parseBody(text) {
   if (text === '') return null;
 
@@ -534,33 +608,26 @@ async function proxyRequest({ platform, connectionId, path, method, query, body,
       ...(ifMatch ? { 'If-Match': ifMatch } : {}),
     };
 
-    return fetch(url, {
-      method: verb,
-      body,
-      headers,
-      credentials: 'omit',
-      redirect: 'error',
-      signal: AbortSignal.timeout(30000),
-    });
+    // The frame has no network (CSP `connect-src 'none'`): the host sends the
+    // request we signed, to the proxy only, and hands back the raw response.
+    return send('proxyFetch', { url, method: verb, headers, body });
   };
 
   let response = await attempt(false);
-  let text = await limitedText(response);
-  let parsed = parseBody(text);
+  let parsed = parseBody(response.text);
 
   // The capability ran out between minting and use (a laptop lid, a slow
   // tab): mint a new one once. Any other refusal is the answer.
   if (response.status === 401 && parsed?.error === 'capability_expired') {
     response = await attempt(true);
-    text = await limitedText(response);
-    parsed = parseBody(text);
+    parsed = parseBody(response.text);
   }
 
   const headers = {};
 
   for (const name of PROXY_HEADERS) {
-    const value = response.headers.get(name);
-    if (value !== null) headers[name] = value;
+    const value = response.headers?.[name];
+    if (typeof value === 'string') headers[name] = value;
   }
 
   return { status: response.status, headers, body: parsed };

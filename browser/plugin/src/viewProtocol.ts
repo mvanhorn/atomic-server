@@ -4,6 +4,8 @@ export type ViewOperation =
   | 'app'
   | 'data'
   | 'get'
+  /** Up to 100 `get`s in one round trip; per-subject errors in place. */
+  | 'getMany'
   | 'query'
   | 'create'
   | 'save'
@@ -21,10 +23,17 @@ export type ViewOperation =
    * own public key and signed by the user (ontola/atomic-plugins#54).
    */
   | 'proxyCapability'
+  /**
+   * Send a request the frame signed to the integration proxy. Frames have no
+   * network of their own (CSP `connect-src 'none'`), so the host sends it.
+   */
+  | 'proxyFetch'
   /** Connection references (never credentials) delegated to this app. */
   | 'proxyConnections'
   /** Ask the person, in host UI, to connect a proxy platform for this app. */
   | 'proxyConnect'
+  /** A function another app in the drive exports (`POST /host/call`). */
+  | 'call'
   /**
    * Host UI. The host draws these itself: a frame cannot draw outside its own
    * box, and a share dialog or a confirm should look like the host's own.
@@ -55,6 +64,8 @@ export interface ViewResponse {
   id: string | number;
   result?: unknown;
   error?: string;
+  /** With `error`, on a failed `call`: the host ABI error code. */
+  code?: string;
 }
 export function viewRequest(
   id: string | number,
@@ -82,6 +93,7 @@ export function isViewRequest(value: unknown): value is ViewRequest {
       'app',
       'data',
       'get',
+      'getMany',
       'query',
       'create',
       'save',
@@ -95,8 +107,10 @@ export function isViewRequest(value: unknown): value is ViewRequest {
       'subscribe',
       'unsubscribe',
       'proxyCapability',
+      'proxyFetch',
       'proxyConnections',
       'proxyConnect',
+      'call',
       'confirm',
       'toast',
       'menu',

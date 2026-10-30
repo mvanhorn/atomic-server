@@ -10,9 +10,15 @@ import type { ResourcePageProps } from '../ResourcePage';
 import { EditableTitle } from '../../components/EditableTitle';
 import { ResourceCoverImage } from '../../components/ResourceDecorations';
 import { Button } from '../../components/Button';
+import { Spinner } from '../../components/Spinner';
 import { Row, Column } from '../../components/Row';
 import { useFollow } from '../../components/Presence/FollowContext';
 import { useRightPanel } from '../../components/RightPanel/RightPanelContext';
+import {
+  FormattingToolbarToggle,
+  TitleRow,
+} from '../../chunks/RTE/useFormattingToolbarVisible';
+import { showMeetingStart } from '../../embed/settings';
 import { getMeetingPhase } from './meetingLifecycle';
 
 const CollaborativeEditor = lazy(
@@ -58,17 +64,20 @@ export function MeetingPage({
         <MeetingHeader>
           <Column gap='0.4rem'>
             <Phase>{phase}</Phase>
-            <EditableTitle
-              resource={resource}
-              onCommit={focusEditor}
-              withDecorations
-            />
+            <TitleRow>
+              <EditableTitle
+                resource={resource}
+                onCommit={focusEditor}
+                withDecorations
+              />
+              <FormattingToolbarToggle />
+            </TitleRow>
           </Column>
           <MeetingActions gap='0.5rem' center>
             <Button subtle onClick={() => openMeetingPanel(resource.subject)}>
               Open chat
             </Button>
-            {phase === 'agenda' && (
+            {phase === 'agenda' && showMeetingStart() && (
               <Button onClick={handleStart} disabled={changing}>
                 Start meeting
               </Button>
@@ -82,7 +91,7 @@ export function MeetingPage({
         </MeetingHeader>
 
         {doc ? (
-          <Suspense fallback={<div>Loading meeting notes…</div>}>
+          <Suspense fallback={<Spinner centered />}>
             <CollaborativeEditor
               id='meeting-editor'
               resource={resource}
@@ -92,7 +101,7 @@ export function MeetingPage({
             />
           </Suspense>
         ) : (
-          <div>Loading meeting notes…</div>
+          <Spinner centered />
         )}
       </Page>
     </>

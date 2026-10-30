@@ -117,6 +117,39 @@ it('backs off repeated failures and does not redial early on discovery refresh',
   await vi.advanceTimersByTimeAsync(1);
   expect(peers).toHaveLength(3);
 });
+
+function markReady(sync: BrowserPeerSync, id: string) {
+  const connections = (sync as unknown as { connections: Map<string, object> })
+    .connections;
+  (connections.get(id) as unknown as { onReady(path: string): void }).onReady(
+    'direct',
+  );
+}
+
+it('keeps backing off when connections die soon after becoming ready', async () => {
+  const socket = SignalSocket.instances[0];
+  socket.message({ type: 'joined', peers: [ids[0]] });
+  let count = 1;
+
+  for (const delay of [3000, 6000, 12000]) {
+    markReady(link, ids[0]);
+    await vi.advanceTimersByTimeAsync(5000);
+    peers[count - 1].reject(new Error('Peer access removed'));
+    await vi.advanceTimersByTimeAsync(delay - 1);
+    expect(peers).toHaveLength(count);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(peers).toHaveLength(++count);
+  }
+  // A connection that stays up for the stable period resets the backoff.
+
+  markReady(link, ids[0]);
+  await vi.advanceTimersByTimeAsync(30_000);
+  peers[count - 1].reject(new Error('remote closed'));
+  await vi.advanceTimersByTimeAsync(2999);
+  expect(peers).toHaveLength(count);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(peers).toHaveLength(count + 1);
+});
 it('removes one departing negotiation without interrupting other peers', () => {
   const socket = SignalSocket.instances[0];
   socket.message({ type: 'joined', peers: ids });
@@ -201,4 +234,50 @@ it('does not pair with another tab of the same browser', async () => {
       .filter(message => message.type === 'offer')
       .map(message => message.to),
   ).toEqual([otherBrowser]);
+});
+
+function linkWithStatus(statuses: string[]) {
+  const agent = { subject: 'did:ad:agent:me' };
+  const db = {};
+  const store = {
+    getAgent: () => agent,
+    getClientDb: () => db,
+  } as unknown as Store;
+
+  return new BrowserPeerSync(store, {
+    drive: 'did:ad:drive',
+    room: 'a'.repeat(64),
+    signalingUrl: 'ws://localhost/webrtc-signal',
+    onStatus: status => statuses.push(status),
+  });
+}
+
+it('counts distinct remote browsers, not their tabs', () => {
+  const statuses: string[] = [];
+  const counted = linkWithStatus(statuses);
+  const socket = SignalSocket.instances.at(-1)!;
+  const tab = (prefix: string, n: string) => prefix.repeat(16) + n.repeat(48);
+  const peerIds = [tab('1', '1'), tab('1', '2'), tab('2', '3')];
+  socket.message({ type: 'joined', peers: peerIds });
+
+  for (const id of peerIds) markReady(counted, id);
+  expect(statuses.at(-1)).toBe('Connected to 2 browsers');
+  counted.close();
+});
+
+it('keeps the last failure in the waiting status', async () => {
+  const statuses: string[] = [];
+  const failing = linkWithStatus(statuses);
+  SignalSocket.instances.at(-1)!.message({ type: 'joined', peers: [ids[0]] });
+  peers.at(-1)!.reject(new Error('no route'));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(statuses.at(-1)).toBe('no route');
+  (failing as unknown as { status(): void }).status();
+  expect(statuses.at(-1)).toBe(
+    'Waiting for a peer (last attempt failed: no route)',
+  );
+  await vi.advanceTimersByTimeAsync(3000);
+  markReady(failing, ids[0]);
+  expect(statuses.at(-1)).toBe('Connected to 1 browser');
+  failing.close();
 });

@@ -16,8 +16,11 @@ pub const FILE: &str = "https://atomicdata.dev/classes/File";
 pub const CHATROOM: &str = "https://atomicdata.dev/classes/ChatRoom";
 pub const FOLDER: &str = "https://atomicdata.dev/classes/Folder";
 pub const PARAGRAPH: &str = "https://atomicdata.dev/classes/elements/Paragraph";
+pub const CHAT_LOG: &str = "https://atomicdata.dev/classes/ChatLog";
 pub const MESSAGE: &str = "https://atomicdata.dev/classes/Message";
+pub const FOLLOW_EVENT: &str = "https://atomicdata.dev/classes/FollowEvent";
 pub const IMPORTER: &str = "https://atomicdata.dev/classes/Importer";
+pub const LENS: &str = "https://atomicdata.dev/classes/Lens";
 pub const ERROR: &str = "https://atomicdata.dev/classes/Error";
 pub const BOOKMARK: &str = "https://atomicdata.dev/class/Bookmark";
 pub const DOCUMENT_V2: &str = "https://atomicdata.dev/classes/DocumentV2";
@@ -72,6 +75,11 @@ pub const ALLOWS_ONLY: &str = "https://atomicdata.dev/properties/allowsOnly";
 pub const COLOR: &str = "https://atomicdata.dev/properties/color";
 // ... for Classes
 pub const REQUIRES: &str = "https://atomicdata.dev/properties/requires";
+pub const CONSTRAINTS: &str = "https://atomicdata.dev/properties/constraints";
+// ... for Lenses
+pub const LENS_FROM: &str = "https://atomicdata.dev/properties/lensFrom";
+pub const LENS_TO: &str = "https://atomicdata.dev/properties/lensTo";
+pub const LENS_TRANSFORM: &str = "https://atomicdata.dev/properties/lensTransform";
 pub const RECOMMENDS: &str = "https://atomicdata.dev/properties/recommends";
 // ... for Drives
 pub const DEFAULT_ONTOLOGY: &str =
@@ -92,6 +100,9 @@ pub const CREATED_BY: &str = "https://atomicdata.dev/properties/createdBy";
 pub const SIGNATURE: &str = "https://atomicdata.dev/properties/signature";
 pub const PREVIOUS_COMMIT: &str = "https://atomicdata.dev/properties/previousCommit";
 pub const LAST_COMMIT: &str = "https://atomicdata.dev/properties/lastCommit";
+/// How much signed history a resource keeps: `compact` or `audit`. Inherited
+/// down the parent chain; see `envelopes::effective_retention`.
+pub const RETENTION: &str = "https://atomicdata.dev/properties/retention";
 pub const IS_GENESIS: &str = "https://atomicdata.dev/properties/isGenesis";
 /// Inline, immutable self-verifying genesis certificate (binary; base64 in
 /// JSON-AD). Carries signer/createdAt/nonce/parent/drive; the DID is
@@ -225,7 +236,10 @@ pub const IMAGE_HEIGHT: &str = "https://atomicdata.dev/properties/imageHeight";
 pub const MESSAGES: &str = "https://atomicdata.dev/properties/messages";
 pub const NEXT_PAGE: &str = "https://atomicdata.dev/properties/nextPage";
 pub const ABOUT: &str = "https://atomicdata.dev/properties/about";
+pub const REPLY_TO: &str = "https://atomicdata.dev/properties/replyTo";
 pub const COMMENTS_FOLDER: &str = "https://atomicdata.dev/properties/commentsFolder";
+pub const TRASH_FOLDER: &str = "https://atomicdata.dev/properties/trashFolder";
+pub const TRASHED_FROM: &str = "https://atomicdata.dev/properties/trashedFrom";
 pub const MEETINGS_FOLDER: &str = "https://atomicdata.dev/properties/meetingsFolder";
 pub const FOLLOW_SESSIONS_CHATROOM: &str =
     "https://atomicdata.dev/properties/followSessionsChatroom";
@@ -296,11 +310,21 @@ pub const PREVIOUS_RELEASE: &str = "https://atomicdata.dev/properties/previousRe
 pub const PUBLISHER: &str = "https://atomicdata.dev/properties/publisher";
 pub const RELEASE_PROP: &str = "https://atomicdata.dev/properties/release";
 pub const GRANTS: &str = "https://atomicdata.dev/properties/grants";
+pub const READ_SCOPE: &str = "https://atomicdata.dev/properties/readScope";
+pub const WRITE_SCOPE: &str = "https://atomicdata.dev/properties/writeScope";
+pub const CALL_SCOPE: &str = "https://atomicdata.dev/properties/callScope";
 pub const INSTALLATION_STATUS: &str = "https://atomicdata.dev/properties/installationStatus";
 pub const DOMAINS: &str = "https://atomicdata.dev/properties/domains";
 pub const STANDARDS: &str = "https://atomicdata.dev/properties/standards";
 pub const EVIDENCE: &str = "https://atomicdata.dev/properties/evidence";
 pub const SUPPORT_TIER: &str = "https://atomicdata.dev/properties/supportTier";
+// ... for Lease (background work placement)
+pub const LEASE: &str = "https://atomicdata.dev/classes/Lease";
+pub const LEASE_OF: &str = "https://atomicdata.dev/properties/leaseOf";
+pub const LEASE_HOLDER: &str = "https://atomicdata.dev/properties/leaseHolder";
+pub const LEASE_EXPIRES_AT: &str = "https://atomicdata.dev/properties/leaseExpiresAt";
+pub const LEASE_GENERATION: &str = "https://atomicdata.dev/properties/leaseGeneration";
+pub const PREVIOUS_LEASE: &str = "https://atomicdata.dev/properties/previousLease";
 pub const EMOJI: &str = "https://atomicdata.dev/properties/emoji";
 // AI
 pub const TEXT_PART: &str = "https://atomicdata.dev/01jtjxtsa9syxmfca2zx5gcnmj/class/text-part";
@@ -333,10 +357,6 @@ pub const PUBLIC_AGENT: &str = "https://atomicdata.dev/agents/publicAgent";
 pub const SUDO_AGENT: &str = "sudo:agent";
 
 // Paths
-pub fn construct_path_import(base: &str) -> String {
-    format!("{base}{PATH_IMPORT}")
-}
-
 pub const PATH_IMPORT: &str = "/import";
 pub const PATH_FETCH_BOOKMARK: &str = "/fetch-bookmark";
 pub const PATH_QUERY: &str = "/query";

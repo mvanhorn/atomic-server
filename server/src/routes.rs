@@ -193,6 +193,61 @@ async fn iroh_sync_handler(
     )
 }
 
+/// The hosted MCP endpoint and its OAuth authorization server. See
+/// `crate::mcp`. Registered before the catch-all routes so that the
+/// `.well-known` and `/oauth` paths are not read as resource subjects.
+fn configure_mcp_routes(app: &mut actix_web::web::ServiceConfig) {
+    use crate::mcp::{endpoint, oauth};
+
+    app.service(
+        web::resource("/.well-known/oauth-protected-resource")
+            .route(web::get().to(oauth::protected_resource_metadata)),
+    )
+    .service(
+        web::resource("/.well-known/oauth-protected-resource/mcp")
+            .route(web::get().to(oauth::protected_resource_metadata)),
+    )
+    .service(
+        web::resource("/.well-known/oauth-authorization-server")
+            .route(web::get().to(oauth::authorization_server_metadata)),
+    )
+    .service(web::resource("/oauth/register").route(web::post().to(oauth::register)))
+    .service(web::resource("/oauth/authorize").route(web::get().to(oauth::authorize)))
+    .service(web::resource("/oauth/agent").route(web::post().to(oauth::issue_agent)))
+    .service(web::resource("/oauth/approve").route(web::post().to(oauth::approve)))
+    .service(web::resource("/oauth/token").route(web::post().to(oauth::token)))
+    .service(
+        web::resource("/mcp")
+            .route(web::post().to(endpoint::mcp))
+            .route(web::get().to(endpoint::mcp_get)),
+    );
+}
+
+/// Registers single-handler routes (`post "/path" => handler`) one per line.
+/// Statement order is registration order, so it keeps the same precedence as
+/// chained `.service` calls.
+#[cfg(feature = "wasm-plugins")]
+macro_rules! plain_routes {
+    ($app:expr; $($method:ident $path:literal => $handler:path),+ $(,)?) => {
+        $( $app.service(web::resource($path).route(web::$method().to($handler))); )+
+    };
+}
+
+/// Like [plain_routes], for POST handlers that read their JSON body as
+/// `web::Bytes` (so a version 2 request signature can cover it). Bytes are
+/// bounded by `PayloadConfig`, so each route carries the limit `web::Json`
+/// used to enforce.
+#[cfg(feature = "wasm-plugins")]
+macro_rules! json_routes {
+    ($app:expr; $($path:literal => $handler:path),+ $(,)?) => {
+        $( $app.service(
+            web::resource($path)
+                .app_data(web::PayloadConfig::new(crate::helpers::JSON_BODY_LIMIT))
+                .route(web::post().to($handler)),
+        ); )+
+    };
+}
+
 /// Set up the Actix server routes. This defines which paths are used.
 // Keep in mind that the order of these matters. An early, greedy route will take
 // precedence over a later route.
@@ -200,160 +255,76 @@ fn configure_wasm_plugin_routes(app: &mut actix_web::web::ServiceConfig) {
     #[cfg(not(feature = "wasm-plugins"))]
     let _ = app;
     #[cfg(feature = "wasm-plugins")]
-    app.service(web::resource("/plugin-ui").to(handlers::plugin_ui::handle_plugin_ui))
-        .service(
-            web::resource("/plugin-view-token")
-                .route(web::post().to(handlers::plugin_ui::handle_mint_view_token)),
-        )
-        .service(
-            web::resource("/plugin-release-pin")
-                .route(web::post().to(handlers::plugin_release::pin)),
-        )
-        .service(
-            web::resource("/plugin-external-read")
-                .route(web::post().to(handlers::plugin_external::read)),
-        )
-        .service(web::resource("/plugin-list").to(handlers::plugin_ui::handle_plugin_list))
-        .service(
-            web::resource("/integration-action-history-compact")
-                .route(web::post().to(handlers::integration_action::compact_history)),
-        )
-        .service(
-            web::resource("/integration-action-consumers")
-                .route(web::post().to(handlers::integration_action::consumers)),
-        )
-        .service(
-            web::resource("/integration-action-consumer-abandon")
-                .route(web::post().to(handlers::integration_action::abandon_consumer)),
-        )
-        .service(
-            web::resource("/integration-action-history")
-                .route(web::post().to(handlers::integration_action::history)),
-        )
-        .service(
-            web::resource("/integration-action-cancel")
-                .route(web::post().to(handlers::integration_action::cancel)),
-        )
-        .service(
-            web::resource("/integration-action-grant")
-                .route(web::post().to(handlers::integration_action::grant)),
-        )
-        .service(
-            web::resource("/integration-action-grants")
-                .route(web::post().to(handlers::integration_action::grants)),
-        )
-        .service(
-            web::resource("/integration-action-recovery-inspect")
-                .route(web::post().to(handlers::integration_action::inspect_recovery)),
-        )
-        .service(
-            web::resource("/integration-action-recovery-confirm")
-                .route(web::post().to(handlers::integration_action::confirm_recovery)),
-        )
-        .service(
-            web::resource("/integration-actions")
-                .route(web::post().to(handlers::integration_action::list)),
-        )
-        .service(
-            web::resource("/integration-action-call")
-                .route(web::post().to(handlers::integration_action::invoke)),
-        )
-        .service(
-            web::resource("/integration-action-proposals")
-                .route(web::post().to(handlers::integration_action::proposals)),
-        )
-        .service(
-            web::resource("/integration-action-approve")
-                .route(web::post().to(handlers::integration_action::approve)),
-        )
-        .service(
-            web::resource("/plugin-sync-preview")
-                .route(web::post().to(handlers::plugin_sync::preview)),
-        )
-        .service(
-            web::resource("/plugin-sync-apply").route(web::post().to(handlers::plugin_sync::apply)),
-        )
-        .service(
-            web::resource("/plugin-sync-schedule")
-                .route(web::post().to(handlers::plugin_sync::schedule)),
-        )
-        .service(
-            web::resource("/plugin-sync-status")
-                .route(web::post().to(handlers::plugin_sync::status)),
-        )
-        .service(
-            web::resource("/plugin-connection-state")
-                .route(web::post().to(handlers::plugin_connection::read)),
-        )
-        .service(
-            web::resource("/plugin-connection-checkpoint")
-                .route(web::post().to(handlers::plugin_connection::checkpoint)),
-        )
-        .service(
-            web::resource("/plugin-external-status")
-                .route(web::post().to(handlers::plugin_external::status)),
-        )
-        .service(
-            web::resource("/plugin-external-confirm")
-                .route(web::post().to(handlers::plugin_external::confirm)),
-        )
-        .service(
-            web::resource("/plugin-external-apply")
-                .route(web::post().to(handlers::plugin_external::apply)),
-        )
-        .service(
-            web::resource("/plugin-package/{id}")
-                .route(web::get().to(handlers::plugin_release::package)),
-        )
-        .service(
-            web::resource("/plugin-package/{id}/zip")
-                .route(web::get().to(handlers::plugin_release::package_zip)),
-        )
-        .service(
-            web::resource("/plugin-catalog")
-                .route(web::get().to(handlers::plugin_release::catalog)),
-        )
-        .service(
-            web::resource("/plugin-release")
-                .route(web::post().to(handlers::plugin_release::publish)),
-        )
-        .service(
-            web::resource("/plugin-release-package")
-                .route(web::post().to(handlers::plugin_release::publish_package)),
-        )
-        .service(
+    {
+        app.service(web::resource("/plugin-ui").to(handlers::plugin_ui::handle_plugin_ui));
+        json_routes!(app;
+            "/plugin-release-pin" => handlers::plugin_release::pin,
+            "/plugin-external-read" => handlers::plugin_external::read,
+        );
+        plain_routes!(app;
+            post "/plugin-view-token" => handlers::plugin_ui::handle_mint_view_token,
+        );
+        app.service(web::resource("/plugin-list").to(handlers::plugin_ui::handle_plugin_list));
+        json_routes!(app;
+            "/integration-action-history-compact" => handlers::integration_action::compact_history,
+            "/integration-action-consumers" => handlers::integration_action::consumers,
+            "/integration-action-consumer-abandon" => handlers::integration_action::abandon_consumer,
+            "/integration-action-history" => handlers::integration_action::history,
+            "/integration-action-cancel" => handlers::integration_action::cancel,
+            "/integration-action-grant" => handlers::integration_action::grant,
+            "/integration-action-grants" => handlers::integration_action::grants,
+            "/integration-action-recovery-inspect" => handlers::integration_action::inspect_recovery,
+            "/integration-action-recovery-confirm" => handlers::integration_action::confirm_recovery,
+            "/integration-actions" => handlers::integration_action::list,
+            "/integration-action-call" => handlers::integration_action::invoke,
+            "/integration-action-proposals" => handlers::integration_action::proposals,
+            "/integration-action-approve" => handlers::integration_action::approve,
+            "/plugin-sync-preview" => handlers::plugin_sync::preview,
+            "/plugin-sync-apply" => handlers::plugin_sync::apply,
+            "/plugin-sync-schedule" => handlers::plugin_sync::schedule,
+            "/plugin-sync-status" => handlers::plugin_sync::status,
+            "/plugin-connection-state" => handlers::plugin_connection::read,
+            "/plugin-connection-checkpoint" => handlers::plugin_connection::checkpoint,
+            "/plugin-external-status" => handlers::plugin_external::status,
+            "/plugin-external-confirm" => handlers::plugin_external::confirm,
+            "/plugin-external-apply" => handlers::plugin_external::apply,
+            "/plugin-release" => handlers::plugin_release::publish,
+        );
+        plain_routes!(app;
+            get "/plugin-package/{id}" => handlers::plugin_release::package,
+            get "/plugin-package/{id}/zip" => handlers::plugin_release::package_zip,
+            get "/plugin-catalog" => handlers::plugin_release::catalog,
+            post "/plugin-release-package" => handlers::plugin_release::publish_package,
+            // Calls an app's export from outside the sandbox. See the handler.
+            post "/host/call" => handlers::host_call::handle_host_call,
+        );
+        app.service(
             web::resource("/plugin-run")
                 // A file handed to an importer travels in the body.
-                .app_data(
-                    web::JsonConfig::default()
-                        .limit(handlers::plugin_run::RUN_JSON_LIMIT)
-                        .error_handler(crate::jsonerrors::json_error_handler),
-                )
+                .app_data(web::PayloadConfig::new(
+                    handlers::plugin_run::RUN_JSON_LIMIT,
+                ))
                 .route(web::post().to(handlers::plugin_run::handle_plugin_run)),
-        )
-        .service(
+        );
+        app.service(
             web::resource("/plugin-schedule")
+                .app_data(web::PayloadConfig::new(crate::helpers::JSON_BODY_LIMIT))
                 .route(web::post().to(handlers::plugin_schedule::handle_set_schedule))
                 .route(web::get().to(handlers::plugin_schedule::handle_get_schedule))
                 .route(web::delete().to(handlers::plugin_schedule::handle_clear_pending)),
-        )
-        .service(
-            web::resource("/plugin-resume")
-                .route(web::post().to(handlers::plugin_schedule::handle_resume)),
-        )
-        .service(
-            web::resource("/plugin-auto-apply")
-                .route(web::post().to(handlers::plugin_schedule::handle_set_auto_apply)),
-        )
-        .service(
-            web::resource("/app-write")
-                .route(web::post().to(handlers::app_write::handle_app_write)),
-        )
-        .service(
+        );
+        json_routes!(app;
+            "/plugin-resume" => handlers::plugin_schedule::handle_resume,
+            "/plugin-auto-apply" => handlers::plugin_schedule::handle_set_auto_apply,
+            "/app-write" => handlers::app_write::handle_app_write,
+        );
+        app.service(
             web::resource("/plugin-trigger")
+                .app_data(web::PayloadConfig::new(crate::helpers::JSON_BODY_LIMIT))
                 .route(web::post().to(handlers::plugin_trigger::handle_set_trigger))
                 .route(web::get().to(handlers::plugin_trigger::handle_get_trigger)),
         );
+    }
 }
 
 pub fn config_routes(app: &mut actix_web::web::ServiceConfig) {
@@ -405,6 +376,7 @@ pub fn config_routes(app: &mut actix_web::web::ServiceConfig) {
             .to(handlers::form::form_page),
     )
     .service(web::resource("/ws").to(handlers::web_sockets::web_socket_handler))
+    .service(web::resource("/genesis").route(web::get().to(handlers::genesis::handle_genesis)))
     .service(web::resource("/drive-usage").to(handlers::drive_usage::handle_drive_usage))
     .service(
         web::resource("/drive-usage/breakdown")
@@ -420,6 +392,7 @@ pub fn config_routes(app: &mut actix_web::web::ServiceConfig) {
             .to(handlers::forget_peer::handle_forget_peer),
     )
     .service(web::resource("/iroh-sync").route(web::post().to(iroh_sync_handler)))
+    .configure(configure_mcp_routes)
     .service(web::resource("/export").to(handlers::export::handle_export))
     .configure(configure_wasm_plugin_routes)
     .service(
@@ -430,6 +403,7 @@ pub fn config_routes(app: &mut actix_web::web::ServiceConfig) {
     )
     .service(
         web::resource("/plugin-secret")
+            .app_data(web::PayloadConfig::new(crate::helpers::JSON_BODY_LIMIT))
             .route(web::post().to(handlers::plugin_secret::handle_set_secret))
             .route(web::get().to(handlers::plugin_secret::handle_list_secrets))
             .route(web::delete().to(handlers::plugin_secret::handle_delete_secret)),

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Resource, type SaveResult } from './resource.js';
+import { Resource, SaveQueuedError, type SaveResult } from './resource.js';
 import { SaveStatusCoordinator } from './save-status-coordinator.js';
 
 function setup() {
@@ -44,6 +44,30 @@ afterEach(() => {
 });
 
 describe('SaveStatusCoordinator', () => {
+  it('flushAll runs every waiting debounced save now and waits for it', async () => {
+    vi.useFakeTimers();
+    const { coordinator, pending } = setup();
+    const a = new Resource('did:ad:a');
+    const b = new Resource('did:ad:b');
+    const saveA = vi.spyOn(a, 'save').mockResolvedValue('persisted');
+    const saveB = vi.spyOn(b, 'save').mockResolvedValue('persisted');
+    coordinator.createScheduler(a).schedule(10_000);
+    coordinator.createScheduler(b).schedule(10_000);
+    const idle = coordinator.createScheduler(a);
+    expect(pending()).toBe(2);
+
+    // No timer has fired: a page about to close cannot wait for them.
+    await coordinator.flushAll();
+
+    expect(saveA).toHaveBeenCalledTimes(1);
+    expect(saveB).toHaveBeenCalledTimes(1);
+    expect(pending()).toBe(0);
+    // Nothing left: a second flush saves nothing again.
+    idle.cancel();
+    await coordinator.flushAll();
+    expect(saveA).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps another owner pending when an observer disposes and one scheduler cancels', async () => {
     vi.useFakeTimers();
     const { coordinator, pending } = setup();
@@ -80,6 +104,24 @@ describe('SaveStatusCoordinator', () => {
     expect(pending()).toBe(0);
     expect(coordinator.getState(resource).kind).toBe('idle');
     unsubscribeSecond();
+  });
+
+  it('does not report a queued scheduled save as an error', async () => {
+    const { coordinator, onError } = setup();
+    const resource = new Resource('_new:queued');
+    const save = vi.spyOn(resource, 'save');
+    const scheduler = coordinator.createScheduler(resource);
+
+    save.mockRejectedValueOnce(new SaveQueuedError());
+    scheduler.schedule(0);
+    await scheduler.flush();
+    expect(onError).not.toHaveBeenCalled();
+
+    const failure = new Error('boom');
+    save.mockRejectedValueOnce(failure);
+    scheduler.schedule(0);
+    await scheduler.flush();
+    expect(onError).toHaveBeenCalledWith(failure);
   });
 
   it('derives immutable snapshots from the current outbox entry and connection', () => {
@@ -130,5 +172,17 @@ describe('SaveStatusCoordinator', () => {
     expect(save).toHaveBeenCalledTimes(1);
     await vi.runAllTimersAsync();
     expect(save).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('scheduled saves are background saves', () => {
+  it('passes background to Resource.save so the soft pace applies', async () => {
+    const { coordinator } = setup();
+    const resource = new Resource('_new:background');
+    const save = vi.spyOn(resource, 'save').mockResolvedValue('persisted');
+    const scheduler = coordinator.createScheduler(resource);
+    scheduler.schedule(0);
+    await scheduler.flush();
+    expect(save).toHaveBeenCalledWith({ background: true });
   });
 });

@@ -15,8 +15,8 @@ import {
   useStore,
   StoreEvents,
   Client,
+  loadLenses,
 } from '@tomic/react';
-import toast from 'react-hot-toast';
 import { SIDEBAR_TOGGLE_WIDTH } from '../components/SideBar';
 import { serverURLStorage } from './serverURLStorage';
 import { useLocalStorage } from '../hooks/useLocalStorage';
@@ -25,6 +25,10 @@ import { isDev } from '../config';
 import { getLocalServerOrigin, isRunningInTauri } from './tauri';
 import { fetchManagedInfo, isAtomicServer } from './managedServer';
 import { isTouchPrimary } from './pointer';
+import {
+  reportSidebarIcons,
+  SHOW_SIDEBAR_ICONS_KEY,
+} from '../embed/hostActions';
 
 interface ProviderProps {
   children: ReactNode;
@@ -49,6 +53,20 @@ export const AppSettingsContextProvider = (
   const [hideTemplates, setHideTemplates] = useLocalStorage(
     'hideTemplates',
     false,
+  );
+  // One setting, same key, label and default as the Flutter app's (see
+  // `reportSidebarIcons`): off hides the icons, images, emoji and avatars in
+  // front of the sidebar's rows. In the app the host owns the value.
+  const [showSidebarIcons, setShowSidebarIconsLocal] = useLocalStorage(
+    SHOW_SIDEBAR_ICONS_KEY,
+    true,
+  );
+  const setShowSidebarIcons = useCallback(
+    (show: boolean) => {
+      setShowSidebarIconsLocal(show);
+      reportSidebarIcons(show);
+    },
+    [setShowSidebarIconsLocal],
   );
   const [sideBarLocked, setSideBarLocked] = useLocalStorage(
     'sideBarOpen',
@@ -83,6 +101,14 @@ export const AppSettingsContextProvider = (
 
   useEffect(() => {
     store.setDrive(drive);
+  }, [drive, store]);
+
+  // Lenses carry values from a renamed or retyped property to its successor.
+  // The store only applies the ones it has loaded, so bring in the drive's.
+  useEffect(() => {
+    if (drive) {
+      loadLenses(store, drive).catch(() => undefined);
+    }
   }, [drive, store]);
 
   // == ACCESSIBILITY ==
@@ -213,18 +239,10 @@ export const AppSettingsContextProvider = (
     [innerSetDrive, setBaseURL],
   );
 
-  const setAgentAndShowToast = useCallback(
+  const setAgentSafely = useCallback(
     (newAgent: Agent | undefined) => {
       try {
         setAgent(newAgent);
-
-        if (newAgent?.subject) {
-          toast.success('Signed in!');
-        }
-
-        if (newAgent === undefined) {
-          toast.success('Signed out.');
-        }
       } catch (e) {
         errorHandler(new Error('Agent setting failed: ' + e.message));
       }
@@ -246,13 +264,15 @@ export const AppSettingsContextProvider = (
       sideBarLocked,
       setSideBarLocked,
       agent,
-      setAgent: setAgentAndShowToast,
+      setAgent: setAgentSafely,
       viewTransitionsEnabled,
       setViewTransitionsEnabled,
       sidebarKeyboardDndEnabled,
       setSidebarKeyboardDndEnabled,
       hideTemplates,
       setHideTemplates,
+      showSidebarIcons,
+      setShowSidebarIcons,
       baseURL,
       setBaseURL,
       setServer,
@@ -274,13 +294,15 @@ export const AppSettingsContextProvider = (
       sideBarLocked,
       setSideBarLocked,
       agent,
-      setAgentAndShowToast,
+      setAgentSafely,
       viewTransitionsEnabled,
       setViewTransitionsEnabled,
       sidebarKeyboardDndEnabled,
       setSidebarKeyboardDndEnabled,
       hideTemplates,
       setHideTemplates,
+      showSidebarIcons,
+      setShowSidebarIcons,
       baseURL,
       setBaseURL,
       setServer,
@@ -332,6 +354,13 @@ export interface AppSettings {
   setSidebarKeyboardDndEnabled: (b: boolean) => void;
   hideTemplates: boolean;
   setHideTemplates: (b: boolean) => void;
+  /**
+   * Show the icons, images, emoji and avatars in front of the sidebar's items.
+   * Default true. The Flutter app has the same setting; inside it the app owns
+   * the value and passes it in.
+   */
+  showSidebarIcons: boolean;
+  setShowSidebarIcons: (b: boolean) => void;
   /** The URL of the currently active server / peer used for resolution. */
   baseURL: string;
   /** Sets the active server / peer. */
@@ -366,6 +395,8 @@ const initialState: AppSettings = {
   setSidebarKeyboardDndEnabled: () => undefined,
   hideTemplates: false,
   setHideTemplates: () => undefined,
+  showSidebarIcons: true,
+  setShowSidebarIcons: () => undefined,
   baseURL: '',
   setBaseURL: () => undefined,
   setServer: () => undefined,

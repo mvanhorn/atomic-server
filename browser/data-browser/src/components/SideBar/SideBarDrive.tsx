@@ -1,119 +1,60 @@
+import { driveDisplayName } from '../../helpers/driveDisplayName';
 import {
-  ai,
   dataBrowser,
-  notifications,
-  server,
   useCanWrite,
-  useChildren,
   useResource,
   useStore,
   useString,
   useSubject,
   useTitle,
 } from '@tomic/react';
-import { canonicalizeScheme } from '@tomic/lib';
 import { Fragment, useEffect, useMemo, useState, type JSX } from 'react';
 import { styled } from 'styled-components';
 import { useSettings } from '../../helpers/AppSettings';
-import { constructOpenURL } from '../../helpers/navigation';
 import { Button } from '../Button';
 import { ResourceSideBar } from './ResourceSideBar/ResourceSideBar';
+import { SidebarSelectionProvider } from './ResourceSideBar/SidebarSelection';
 import { SideBarHeader } from './SideBarHeader';
 import { SimpleErrorBlock } from '../ErrorLook';
 import { DriveSwitcher } from './DriveSwitcher';
 import { Row } from '../Row';
-import { IconButton } from '../IconButton/IconButton';
-import { buildDefaultTrigger } from '../Dropdown/DefaultTrigger';
+import type { DropdownTriggerProps } from '../Dropdown/DropdownTrigger';
 import { LuChevronsUpDown } from 'react-icons/lu';
 import { useCurrentSubject } from '../../helpers/useCurrentSubject';
 import { ScrollArea } from '../ScrollArea';
-import { useSidebarDnd } from './useSidebarDnd';
-import { closestCenter, DndContext, DragOverlay } from '@dnd-kit/core';
-import { SidebarItemTitle } from './ResourceSideBar/SidebarItemTitle';
 import { DropEdge } from './ResourceSideBar/DropEdge';
 import { SIDEBAR_CHILD_LIMIT, SideBarMoreRow } from './SideBarMoreRow';
-import { createPortal } from 'react-dom';
-import { useNavigateWithTransition } from '../../hooks/useNavigateWithTransition';
 import { LoaderInline } from '../Loader';
 import { QuickCreateRow } from '../NewInstanceButton';
 import { ResourceGlyph } from '../ResourceGlyph';
 import { useIsPrivateDrive } from '../../hooks/useIsPrivateDrive';
+import { useVisibleDriveChildren } from '../../hooks/useVisibleDriveChildren';
 
 interface SideBarDriveProps {
   onItemClick: () => unknown;
-  onIsRearangingChange: (isRearanging: boolean) => void;
 }
 
-/** Shows the current Drive, it's children and an option to change to a different Drive */
-export function SideBarDrive({
-  onItemClick,
-  onIsRearangingChange,
-}: SideBarDriveProps): JSX.Element {
+/**
+ * Shows the current Drive, it's children and an option to change to a different Drive.
+ * Must render inside the sidebar's `DndContext` (see `SideBar`).
+ */
+export function SideBarDrive({ onItemClick }: SideBarDriveProps): JSX.Element {
   const store = useStore();
   const { drive, agent } = useSettings();
-  const {
-    handleDragStart,
-    handleDragEnd,
-    draggingResource,
-    sensors,
-    animateDrop,
-    dndExplanation,
-    announcements,
-  } = useSidebarDnd(onIsRearangingChange);
   const driveResource = useResource(drive);
   const {
-    subjects: allChildren,
+    subjects: subResources,
+    allSubjects: allChildren,
     loading: childrenLoading,
     total: totalChildren,
-  } = useChildren(drive, { limit: SIDEBAR_CHILD_LIMIT });
-
-  // The drive's default ontology is schema plumbing (auto-created by
-  // `createDrive`) — hide it from the tree so users aren't confronted with an
-  // "Ontology" they never made. It stays reachable via the drive page and
-  // class/property links. Ontologies the user creates themselves still show.
-  const [defaultOntology] = useString(
-    driveResource,
-    server.properties.defaultOntology,
-  );
-  // Same for the Comments folder (the standard location holding comment
-  // Messages, created lazily on the first comment): comments are reached
-  // through the Comments panel, not by browsing the folder.
-  const [commentsFolder] = useString(
-    driveResource,
-    dataBrowser.properties.commentsFolder,
-  );
-  // And the AI Chats folder (on the personal drive): chats re-open through
-  // the AI sidebar on the resource they were started on.
-  const [aiChatsFolder] = useString(driveResource, ai.properties.aiChatsFolder);
-  // And the Inbox (on the personal drive): it opens from Notifications in the
-  // app menu.
-  const [inbox] = useString(driveResource, notifications.properties.inbox);
-  const subResources = useMemo(
-    () =>
-      allChildren.filter(subject => {
-        const canonical = canonicalizeScheme(subject);
-
-        return (
-          canonical !== canonicalizeScheme(defaultOntology ?? '') &&
-          canonical !== canonicalizeScheme(commentsFolder ?? '') &&
-          canonical !== canonicalizeScheme(aiChatsFolder ?? '') &&
-          canonical !== canonicalizeScheme(inbox ?? '')
-        );
-      }),
-    [allChildren, defaultOntology, commentsFolder, aiChatsFolder, inbox],
-  );
-  const [title] = useTitle(driveResource);
-  const isPrivateDrive = useIsPrivateDrive(drive);
-  // A drive with its own emoji or icon shows that; the private drive is
-  // "home" by default, any other drive falls back to the class icon.
-  const [driveEmoji] = useString(driveResource, dataBrowser.properties.emoji);
-  const [driveIcon] = useSubject(driveResource, dataBrowser.properties.icon);
-  const hasCustomGlyph = !!(driveEmoji || driveIcon);
-  const navigate = useNavigateWithTransition();
+  } = useVisibleDriveChildren(drive, { limit: SIDEBAR_CHILD_LIMIT });
   const agentCanWrite = useCanWrite(driveResource);
   const [currentSubject] = useCurrentSubject();
   const currentResource = useResource(currentSubject);
   const [ancestry, setAncestry] = useState<string[]>([]);
+  // One array for the whole render: a fresh `[drive]` per render defeats the
+  // memo on every top-level row, and with it the rows below.
+  const driveHierarchy = useMemo(() => [drive], [drive]);
 
   useEffect(() => {
     store.getResourceAncestry(currentResource.stable).then(result => {
@@ -121,55 +62,16 @@ export function SideBarDrive({
     });
   }, [store, currentResource.stable]);
 
-  const driveName = driveResource.isUnauthorized()
-    ? 'Unauthorized'
-    : title || drive;
-
   return (
     <>
       <SideBarHeader>
-        <TitleButton
-          resource={drive}
-          clean
-          current={drive === currentSubject}
-          data-testid='sidebar-drive-open'
-          onClick={() => {
-            onItemClick();
-            navigate(constructOpenURL(drive));
-          }}
-        >
-          <DriveGlyph aria-hidden>
-            {!hasCustomGlyph && isPrivateDrive ? (
-              '🏠'
-            ) : (
-              <ResourceGlyph resource={driveResource} />
-            )}
-          </DriveGlyph>
-          <DriveTitle data-testid='current-drive-title'>{driveName}</DriveTitle>
-        </TitleButton>
-        <DriveSwitcher Trigger={DriveSwitcherTrigger} />
+        <DriveSwitcher Trigger={DriveSwitcherTrigger} onSwitch={onItemClick} />
       </SideBarHeader>
-      <DndContext
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        sensors={sensors}
-        // `closestCenter` lets the 3-pixel `DropEdge` strips between
-        // siblings win over the much-taller "drop onto folder row"
-        // targets when the dragged item is over a sibling gap. With the
-        // default `rectIntersection` the bigger row always swallowed
-        // every drop and inter-sibling reordering became unreachable.
-        collisionDetection={closestCenter}
-        accessibility={{
-          announcements,
-          screenReaderInstructions: {
-            draggable: dndExplanation,
-          },
-        }}
-      >
+      <SidebarSelectionProvider current={currentSubject} ancestry={ancestry}>
         <StyledScrollArea>
           <ListWrapper>
             <DropEdge
-              parentHierarchy={[drive]}
+              parentHierarchy={driveHierarchy}
               index={0}
               prevSubject={undefined}
               nextSubject={subResources[0]}
@@ -187,12 +89,11 @@ export function SideBarDrive({
                   <Fragment key={child}>
                     <ResourceSideBar
                       subject={child}
-                      renderedHierarchy={[drive]}
-                      ancestry={ancestry}
+                      renderedHierarchy={driveHierarchy}
                       onClick={onItemClick}
                     />
                     <DropEdge
-                      parentHierarchy={[drive]}
+                      parentHierarchy={driveHierarchy}
                       index={index + 1}
                       prevSubject={child}
                       nextSubject={subResources[index + 1]}
@@ -230,19 +131,7 @@ export function SideBarDrive({
             )}
           </ListWrapper>
         </StyledScrollArea>
-        {createPortal(
-          <DragOverlay dropAnimation={animateDrop}>
-            {draggingResource && (
-              <SidebarItemTitle
-                subject={draggingResource}
-                hideActionButtons
-                isDragging
-              />
-            )}
-          </DragOverlay>,
-          document.body,
-        )}
-      </DndContext>
+      </SidebarSelectionProvider>
     </>
   );
 }
@@ -269,64 +158,84 @@ const DriveTitle = styled.h2`
   text-overflow: ellipsis;
 `;
 
-/**
- * The title and the drive-switcher caret form one segmented control: a
- * flush inner edges, shared outer rounding, each
- * half highlighting on its own hover.
- */
-const TitleButton = styled(Button)<{ current?: boolean }>`
+const Chevron = styled(LuChevronsUpDown)`
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: ${p => p.theme.colors.textLight};
+`;
+
+/** The whole header is one button: glyph, drive name and a hint chevron. */
+const TriggerButton = styled(Button)<{ current?: boolean }>`
   display: flex;
   align-items: center;
   gap: 0.5rem;
   text-align: left;
-  /* Fill the header so the switcher caret is always pinned to the right;
-     the name truncates when longer than the sidebar. */
   flex: 1;
   min-width: 0;
   padding: 0.35rem 0.5rem;
   border: none;
-  border-radius: ${props => props.theme.radius} 0 0
-    ${props => props.theme.radius};
 
-  ${({ current, theme }) =>
-    current &&
-    `
-    color: ${theme.colors.main};
-  `}
+  ${({ current, theme }) => current && `color: ${theme.colors.main};`}
 
-  &:hover {
-    background-color: ${props => props.theme.colors.bg1};
+  @media (hover: hover) {
+    &:hover {
+      background-color: ${props => props.theme.colors.bg1};
+    }
   }
   &:active {
     background-color: ${props => props.theme.colors.bg2};
   }
 `;
 
-const SwitcherButton = styled(IconButton)`
-  align-self: stretch;
-  height: auto;
-  width: auto;
-  padding-inline: 0.35rem;
-  border: none;
-  border-radius: 0 ${p => p.theme.radius} ${p => p.theme.radius} 0;
-  color: ${p => p.theme.colors.textLight};
-  font-size: 0.85rem;
+function DriveSwitcherTrigger({
+  onClick,
+  menuId,
+  isActive,
+  ref,
+  id,
+}: DropdownTriggerProps) {
+  const { drive, showSidebarIcons } = useSettings();
+  const driveResource = useResource(drive);
+  const [title] = useTitle(driveResource);
+  const isPrivateDrive = useIsPrivateDrive(drive);
+  const [currentSubject] = useCurrentSubject();
+  // A drive with its own emoji or icon shows that; the private drive is
+  // "home" by default, any other drive falls back to the class icon.
+  const [driveEmoji] = useString(driveResource, dataBrowser.properties.emoji);
+  const [driveIcon] = useSubject(driveResource, dataBrowser.properties.icon);
+  const hasCustomGlyph = !!(driveEmoji || driveIcon);
+  const driveName = driveResource.isUnauthorized()
+    ? 'Unauthorized'
+    : driveDisplayName(driveResource.error ? undefined : title, drive);
 
-  &:hover,
-  &:focus-visible {
-    background-color: ${p => p.theme.colors.bg1};
-    color: ${p => p.theme.colors.text};
-  }
-  &:active {
-    background-color: ${p => p.theme.colors.bg2};
-  }
-`;
-
-const DriveSwitcherTrigger = buildDefaultTrigger(
-  <LuChevronsUpDown />,
-  'Switch Drive',
-  SwitcherButton,
-);
+  return (
+    <TriggerButton
+      clean
+      current={drive === currentSubject}
+      id={id}
+      aria-controls={menuId}
+      aria-expanded={isActive}
+      aria-haspopup='menu'
+      onClick={onClick}
+      ref={ref}
+      title='Switch Drive'
+      data-testid='sidebar-drive-switcher'
+    >
+      {showSidebarIcons && (
+        <DriveGlyph aria-hidden>
+          {!hasCustomGlyph && isPrivateDrive ? (
+            '🏠'
+          ) : (
+            <ResourceGlyph resource={driveResource} />
+          )}
+        </DriveGlyph>
+      )}
+      <DriveTitle data-testid='current-drive-title'>{driveName}</DriveTitle>
+      <Chevron aria-hidden />
+    </TriggerButton>
+  );
+}
 
 const SideBarErr = styled(SimpleErrorBlock)`
   margin-inline-end: ${props => props.theme.size()};
